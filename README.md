@@ -6,12 +6,28 @@ All Node-stack code lives under [`node/`](node/); the repo is laid out so other 
 
 ## Using the image
 
-The devcontainer is a Compose stack of three containers — your dev environment (`app`) plus `mysql` and `redis` — so a downstream repo needs two files. Copy both from [`node/examples/`](node/examples/) into a `.devcontainer/` directory at your repo root:
+The devcontainer is a Compose stack of three containers — your dev environment (`app`) plus `mysql` and `redis`. To set one up in a project from VS Code:
+
+**1. Install the prerequisites** — [VS Code](https://code.visualstudio.com/), the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) (`ms-vscode-remote.remote-containers`), and a container engine: Docker Desktop, or Podman (point the extension at it by setting `dev.containers.dockerPath` to `podman` in VS Code settings).
+
+**2. Add the config** — copy both files from [`node/examples/`](node/examples/) into a `.devcontainer/` directory at the root of your repo:
 
 - `.devcontainer/devcontainer.json`
 - `.devcontainer/compose.yaml`
 
-`devcontainer.json` is just:
+Copy these rather than using VS Code's *Dev Containers: Add Dev Container Configuration Files* command — that scaffolds VS Code's own generic templates, not this image.
+
+**3. Choose the Node version** — in `.devcontainer/compose.yaml`, set the `app` service's image tag to the Node major you want, `node22` or `node24` (see [Tagging](#tagging)).
+
+**4. Reopen in the container** — open the repo folder in VS Code. It detects `.devcontainer/` and offers a **Reopen in Container** notification; click it, or run **Dev Containers: Reopen in Container** from the Command Palette (`F1`). VS Code pulls the `app`, `mysql`, and `redis` images, starts the stack, and attaches a shell in the `app` container. The first open takes a minute or two while images download; later opens are near-instant.
+
+After changing the `.devcontainer/` config — or to pick up a newer published image — run **Dev Containers: Rebuild Container**.
+
+> **Image vs. template.** VS Code's *New Dev Container…* command lists devcontainer *templates* — a separate kind of published artifact — not plain images. This project publishes container *images* (referenced by `devcontainer.json`), so always use the copy-the-files flow above. Once `.devcontainer/` is committed to a repo, every entry point — *Reopen in Container*, *Open Folder in Container*, *Clone Repository in Container Volume*, Codespaces — picks it up automatically, with no per-developer setup.
+
+### What the two files do
+
+`devcontainer.json` is minimal:
 
 ```jsonc
 {
@@ -22,7 +38,7 @@ The devcontainer is a Compose stack of three containers — your dev environment
 }
 ```
 
-`compose.yaml` pulls the published `app` image — set its tag to the Node major you want, `node22` or `node24` (see [Tagging](#tagging)) — and defines the `mysql` and `redis` services. The `app` image still carries its own VS Code extension list, settings, mount config, and post-attach hook via an embedded `devcontainer.metadata` label — the Dev Containers extension reads that label and merges it with `devcontainer.json`, so anything genuinely repo-specific composes with the image defaults rather than replacing them. Repo-specific infrastructure (an extra service, a different mount) goes in your copy of `compose.yaml`.
+`compose.yaml` pulls the published `app` image and defines the `mysql` and `redis` services. The `app` image carries its own VS Code extension list, settings, mount config, and post-attach hook via an embedded `devcontainer.metadata` label — the Dev Containers extension reads that label and merges it with `devcontainer.json`, so anything genuinely repo-specific composes with the image defaults rather than replacing them. Repo-specific infrastructure (an extra service, a different mount) goes in your copy of `compose.yaml`.
 
 ## What's in it
 
