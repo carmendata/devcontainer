@@ -1,0 +1,6 @@
+{
+  "variants": [
+    { "name": "node22", "node": "22-bookworm-slim", "pnpm": "10.33.0", "tags": ["node22"] },
+    { "name": "node24", "node": "24-bookworm-slim", "pnpm": "10.33.0", "tags": ["node24"] }
+  ]
+}

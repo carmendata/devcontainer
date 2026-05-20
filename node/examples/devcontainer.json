@@ -1,0 +1,6 @@
+{
+  "name": "my-project Development",
+  "dockerComposeFile": "compose.yaml",
+  "service": "app",
+  "workspaceFolder": "/workspace"
+}

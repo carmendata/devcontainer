@@ -1,0 +1,52 @@
+# Local build + test composition for this repo: builds the app image from
+# src/ and stands it up next to the mysql and redis service containers.
+#
+# Downstream repos do NOT use this file -- they copy the template under
+# examples/, which pulls the published app image instead of building it.
+name: devcontainer-node
+
+services:
+  app:
+    build:
+      context: ./src
+      # Defaults to the newest variant; override to test another, e.g.
+      #   NODE_VARIANT=22-bookworm-slim docker compose build
+      args:
+        NODE_VARIANT: ${NODE_VARIANT:-24-bookworm-slim}
+        PNPM_VERSION: ${PNPM_VERSION:-10.33.0}
+    command: sleep infinity
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      # Dev sandbox only: passwordless root. Never use this in production.
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: "%"
+    # native password keeps the Debian `mysql` (MariaDB) client in the app
+    # container able to connect with an empty password.
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4
+    # persistence disabled -- the dev datastore is throwaway.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mysql-data:

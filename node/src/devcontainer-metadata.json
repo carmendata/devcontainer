@@ -1,0 +1,27 @@
+[
+  {
+    "overrideCommand": false,
+    "remoteUser": "root",
+    "mounts": [
+      "source=${localEnv:USERPROFILE}${localEnv:HOME}/.ssh,target=/root/.ssh-host,type=bind,consistency=cached"
+    ],
+    "postAttachCommand": "git config --global --add safe.directory ${containerWorkspaceFolder} && ([ -f ./init.dev.sh ] && ./init.dev.sh || true)",
+    "initializeCommand": "echo -e '\\n\\nInitialising your development container ... please wait.'",
+    "customizations": {
+      "vscode": {
+        "extensions": [
+          "dbaeumer.vscode-eslint",
+          "esbenp.prettier-vscode",
+          "PKief.material-icon-theme",
+          "mtxr.sqltools-driver-mysql",
+          "mtxr.sqltools",
+          "shd101wyy.markdown-preview-enhanced"
+        ],
+        "settings": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  }
+]
