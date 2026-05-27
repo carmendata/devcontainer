@@ -23,10 +23,22 @@ ENV NODE_ENV=development \
 # gcc/g++/python3; add build-essential to this list if that ever comes up.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl \
+        ca-certificates curl gnupg \
         git openssh-client \
         jq make less iproute2 procps \
         sqlite3 redis-tools default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- GitHub CLI -------------------------------------------------------------
+# gh is not in Debian's default repos; install from GitHub's apt repository.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
 # --- pnpm via corepack (corepack ships with Node) ---------------------------
