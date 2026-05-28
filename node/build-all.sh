@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Build every image variant declared in variants.json locally -- the same
-# source of truth CI uses. Each is tagged devcontainer:<name>.
+# Build all three tiers locally -- the same source of truth CI uses:
+#   devcontainer:base  (minimal prod base)  ->  devcontainer:dev  (dev tooling)
+#   ->  devcontainer:<name>  for every variant in variants.json.
 #
 # Requires jq and a container builder (docker or podman -- whichever has a
 # working engine; force one with DOCKER=podman).
@@ -25,13 +26,23 @@ else
     exit 1
 fi
 
+echo "==> building base  (devcontainer:base)"
+"$builder" build -t devcontainer:base ../base/src
+
+echo "==> building dev  (devcontainer:dev)"
+"$builder" build \
+    --build-arg "BASE_IMAGE=devcontainer:base" \
+    -t devcontainer:dev \
+    ../dev/src
+
 jq -c '.variants[]' variants.json | while read -r variant; do
     name=$(jq -r '.name' <<<"$variant")
     node=$(jq -r '.node' <<<"$variant")
     pnpm=$(jq -r '.pnpm' <<<"$variant")
-    echo "==> building ${name}  (node:${node}, pnpm ${pnpm})"
+    echo "==> building ${name}  (node ${node}, pnpm ${pnpm})"
     "$builder" build \
-        --build-arg "NODE_VARIANT=${node}" \
+        --build-arg "DEV_IMAGE=devcontainer:dev" \
+        --build-arg "NODE_VERSION=${node}" \
         --build-arg "PNPM_VERSION=${pnpm}" \
         -t "devcontainer:${name}" \
         ./src

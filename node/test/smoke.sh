@@ -37,6 +37,15 @@ compose() { "$DOCKER" compose "$@" </dev/null; }
 
 trap 'compose down -v >/dev/null 2>&1 || true' EXIT
 
+# Variants build FROM the dev tier, which builds FROM the base tier. Build both
+# once up front and point the stack at the local dev image (the compose default
+# is the published dev image).
+echo "--> building base image (devcontainer:base)"
+"$DOCKER" build -t devcontainer:base ../base/src
+echo "--> building dev image (devcontainer:dev)"
+"$DOCKER" build --build-arg BASE_IMAGE=devcontainer:base -t devcontainer:dev ../dev/src
+export DEV_IMAGE=devcontainer:dev
+
 # Select variants to test: all of them, or one by name.
 if [ "$#" -gt 0 ]; then
     variants=$(jq -c --arg n "$1" '.variants[] | select(.name == $n)' variants.json)
@@ -62,11 +71,11 @@ while read -r v; do
     name=$(jq -r '.name' <<<"$v")
     node=$(jq -r '.node' <<<"$v")
     pnpm=$(jq -r '.pnpm' <<<"$v")
-    major=${node%%-*}                       # 24-bookworm-slim -> 24
+    major=${node%%.*}                       # 24.16.0 -> 24
 
     echo
-    echo "=== variant: ${name}  (node:${node}, pnpm ${pnpm}) ==="
-    export NODE_VARIANT="$node" PNPM_VERSION="$pnpm"
+    echo "=== variant: ${name}  (node ${node}, pnpm ${pnpm}) ==="
+    export NODE_VERSION="$node" PNPM_VERSION="$pnpm"
     failed=0
 
     echo "--> build + start stack"

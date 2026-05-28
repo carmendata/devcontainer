@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Start the in-container Docker daemon for CI/release image builds, and block
+# until it is ready to accept connections.
+#
+# This is opt-in: the devcontainer never calls it. There, mysql/redis run as
+# sibling containers on the *host* daemon via node/compose.yaml, and dockerd
+# inside this container stays stopped. A CI/release job that needs to build
+# images runs this image with --privileged and invokes `start-dockerd` before
+# its `docker build` / `docker buildx build` steps.
+set -euo pipefail
+
+if docker info >/dev/null 2>&1; then
+  echo "dockerd already running"
+  exit 0
+fi
+
+echo "starting dockerd..."
+dockerd >/var/log/dockerd.log 2>&1 &
+
+for _ in $(seq 1 30); do
+  if docker info >/dev/null 2>&1; then
+    echo "dockerd ready"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "dockerd failed to become ready within 30s; last log lines:" >&2
+tail -n 50 /var/log/dockerd.log >&2 || true
+exit 1

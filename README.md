@@ -2,7 +2,7 @@
 
 A devcontainer setup, initially for Node.js projects: Node 22 and Node 24 (LTS) + pnpm `app` images, run alongside MySQL 8 and Redis 7 service containers via Docker Compose. Designed to be referenced from a small `.devcontainer/` directory in every downstream repo so updates land everywhere without per-repo changes.
 
-All Node-stack code lives under [`node/`](node/); the repo is laid out so other stacks — a `go/` or `python/` directory — can be added alongside it later.
+Every published image is built in three tiers: a minimal [`base/`](base/) (`debian:trixie-slim` + org-wide essentials, lean enough to use in **production** too), a [`dev/`](dev/) tier adding the dev/CI tooling and the Docker engine, and a thin language tier on top. All Node-stack code lives under [`node/`](node/); the repo is laid out so other stacks — a `go/` or `python/` directory — can be added alongside it later, each layered on the same `base` + `dev` tiers.
 
 ## Using the image
 
@@ -49,11 +49,25 @@ The repo publishes several `app` image **variants** — each a Node major paired
 | `node22`    | 22 (LTS) | 10.33.0 |
 | `node24`    | 24 (LTS) | 10.33.0 |
 
-Every variant shares the same base: `debian:bookworm-slim` via the official `node:<major>-bookworm-slim` image, with pnpm enabled through corepack.
+Every variant is built in three tiers: the minimal `base` (`debian:trixie-slim` + org-wide essentials), the `dev` tier on top (the common dev tooling below), and finally the variant, which adds only Node — installed from the official nodejs.org tarball into `/usr/local` — with pnpm enabled through corepack.
 
-Plus the `redis-cli` and `mysql` client CLIs for use from the dev shell. The `mysql` client is Debian's MariaDB-flavoured `default-mysql-client` — there is no `arm64` Oracle MySQL client package — and it connects to the `mysql` service normally.
+The `dev` tier carries the stack-agnostic tooling shared by every variant: `git`, `gh` (GitHub CLI), `jq`, `make`, `curl`, `ssh`, plus the `redis-cli` and `mysql` client CLIs for use from the dev shell. The `mysql` client is Debian's MariaDB-flavoured `default-mysql-client` — there is no `arm64` Oracle MySQL client package — and it connects to the `mysql` service normally. None of this ships in the `base` tier, so `base` stays lean enough to use as a production base too.
 
-The `app` image is deliberately lean: a `node:<major>-bookworm-slim` base and no C/C++ toolchain. `make` is included, but `build-essential` is not. A repo whose npm dependencies compile native addons (`node-gyp`) needs `gcc`/`g++`/`python3` — add `build-essential` back to `node/src/Dockerfile`, or install the toolchain in that repo's own setup.
+The `dev` tier also bakes in the **Docker engine + buildx**, so a CI/release job can run the image and build images itself (see [Building images from CI](#building-images-from-ci)). This is dormant in the devcontainer — the daemon is never started there.
+
+The images are deliberately lean: no C/C++ toolchain. `make` is included, but `build-essential` is not. A repo whose npm dependencies compile native addons (`node-gyp`) needs `gcc`/`g++`/`python3` — add `build-essential` to `node/src/Dockerfile`, or install the toolchain in that repo's own setup.
+
+### Building images from CI
+
+The `dev` tier bundles the Docker engine, `docker buildx`, and a `start-dockerd` helper so a CI/release pipeline can build and push images from inside this container (Docker-in-Docker), with versions pinned for reproducibility. It is opt-in and used only by CI:
+
+```sh
+# the CI job must run the container with --privileged
+start-dockerd
+docker buildx build --platform linux/amd64,linux/arm64 -t <image> --push .
+```
+
+`start-dockerd` launches `dockerd` and blocks until it is ready. The **devcontainer never calls it** — there, `mysql`/`redis` run as sibling containers on the *host* daemon via `compose.yaml`, the in-image `dockerd` stays stopped, and no `--privileged` is needed. Docker versions are pinned in [`dev/src/Dockerfile`](dev/src/Dockerfile); bump them deliberately.
 
 Companion service containers, from official upstream images:
 
@@ -68,9 +82,11 @@ Connect to them by **service name** — e.g. `mysql -h mysql -u root` or `redis-
 
 The `app` image builds natively for both **`arm64` and `amd64`** — no emulation. This is the payoff of running MySQL and Redis as service containers rather than installing them into the image: MySQL's Debian apt repo ships no `arm64` packages (which previously forced an amd64-only image and broke Redis under QEMU emulation on Apple Silicon), but the official `mysql` and `redis` container images are multi-arch. Every container — `app`, `mysql`, `redis` — now runs native on whatever host it lands on.
 
+**Shared tiers.** The `base` (`debian:trixie-slim` + essentials) and `dev` (base + tooling + docker) tiers are each built and pushed once, and every variant is layered on top of that exact `dev` image. So the heavy lower tiers are stored once in GHCR and pulled once onto a machine — pulling `node24` after `node22` (or a future `go` image) fetches only that variant's thin Node/runtime layer, not the tiers beneath. This is why Node is installed from the nodejs.org tarball in the variant rather than starting from the official `node:<major>-slim` image: a per-major Node base image would sit *below* the shared tooling and defeat that deduplication.
+
 ## Tagging
 
-All variants publish to a single package — **`ghcr.io/<owner>/devcontainer`** — with the variant in the **tag**, not the image name. This keeps the package stack-agnostic: today `devcontainer:node22` and `devcontainer:node24`, with room to add `devcontainer:go`, `devcontainer:python`, and so on later.
+All images publish to a single package — **`ghcr.io/<owner>/devcontainer`** — with the tier/variant in the **tag**, not the image name. This keeps the package stack-agnostic: today `devcontainer:node22` and `devcontainer:node24`, with room to add `devcontainer:go`, `devcontainer:python`, and so on later. The two lower tiers are published too — `devcontainer:base` (usable as a production base) and `devcontainer:dev` — so they can be consumed directly; most repos pin a language variant tag.
 
 The variants and the tags they publish are defined in [`node/variants.json`](node/variants.json). For each variant, CI publishes:
 
@@ -81,14 +97,17 @@ There is deliberately **no `latest` tag**: across multiple stacks sharing one pa
 
 ## Updating
 
-The Node images rebuild on every push to `main` that touches `node/`, weekly on Monday 04:00 UTC to pick up base-image and OS security updates, and on demand via `workflow_dispatch` — see [`.github/workflows/build-node.yml`](.github/workflows/build-node.yml). To change something everyone gets — a new extension, an extra system package, a Node or pnpm version — edit the relevant file and push to `main`.
+The images rebuild on every push to `main` that touches `base/`, `dev/`, or `node/`, weekly on Monday 04:00 UTC to pick up base-image and OS security updates, and on demand via `workflow_dispatch` — see [`.github/workflows/build.yml`](.github/workflows/build.yml). The workflow builds the tiers in order — `base`, then `dev`, then every variant. To change something everyone gets — a new extension, an extra system package, a Node or pnpm version — edit the relevant file and push to `main`.
 
+- `base/src/Dockerfile` — the minimal prod-capable base (`debian:trixie-slim` + essentials)
+- `dev/src/Dockerfile` — the dev/CI tier: common system packages, `gh`, the pinned Docker engine/buildx
+- `dev/src/start-dockerd` — the opt-in Docker-in-Docker daemon launcher for CI
 - `node/variants.json` — the Node/pnpm build variants and the tags each publishes
-- `node/src/Dockerfile` — the `app` image: base image, system packages, pnpm
+- `node/src/Dockerfile` — the Node variant: Node version (tarball) + pnpm, layered on the `dev` tier
 - `node/src/devcontainer-metadata.json` — extensions, settings, mounts, lifecycle hooks
 - `node/examples/compose.yaml` — the service definitions downstream repos copy
 
-To add a build variant — a new Node major, or a second pnpm version for an existing one — add an object to `node/variants.json` with a unique `name`, the `node` base-image suffix (e.g. `24-bookworm-slim`), a `pnpm` version, and the rolling `tags` to publish. For example, a second pnpm line for Node 24: `{ "name": "node24-pnpm9", "node": "24-bookworm-slim", "pnpm": "9.15.0", "tags": ["node24-pnpm9"] }`. CI picks it up on the next push — no workflow change needed.
+To add a build variant — a new Node major, or a second pnpm version for an existing one — add an object to `node/variants.json` with a unique `name`, the full `node` version (e.g. `24.16.0`), a `pnpm` version, and the rolling `tags` to publish. For example, a second pnpm line for Node 24: `{ "name": "node24-pnpm9", "node": "24.16.0", "pnpm": "9.15.0", "tags": ["node24-pnpm9"] }`. CI picks it up on the next push — no workflow change needed.
 
 Two caveats on how changes propagate. Changes to `devcontainer-metadata.json` don't rebuild the image layers — the JSON is excluded from the Docker build context via `node/src/.dockerignore` and applied as a label at build time; pushing a metadata-only change still produces a new image but is cheap. And changes to `node/examples/compose.yaml` (e.g. a new MySQL version) reach a downstream repo only when it re-copies the file — unlike the `app` image, which is pulled automatically on the next container rebuild.
 
@@ -106,6 +125,8 @@ docker compose build              # build the app image (default variant)
 docker compose up -d --wait       # start app + mysql + redis
 ```
 
+By default `docker compose build` layers the app on the **published** `dev` image (`ghcr.io/<owner>/devcontainer:dev`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) (it builds `devcontainer:base` → `devcontainer:dev` → each variant), or build them and pass `DEV_IMAGE=devcontainer:dev docker compose build`.
+
 `--wait` blocks until every healthcheck passes. Poke at the stack:
 
 ```bash
@@ -119,7 +140,7 @@ mysql -h mysql -u root -e "SELECT VERSION();"
 
 Tear down with `docker compose down -v` (the `-v` also drops the MySQL volume).
 
-`docker compose build` uses the default variant; build another with `NODE_VARIANT=22-bookworm-slim docker compose build`. To build every variant at once, run [`node/build-all.sh`](node/build-all.sh); to smoke-test the full stack for every variant, run [`node/test/smoke.sh`](node/test/smoke.sh) (or pass one variant name, e.g. `./test/smoke.sh node24`). `podman compose` works in place of `docker compose`; `build-all.sh` and `test/smoke.sh` auto-detect a working docker or podman engine (force one with `DOCKER=podman`).
+`docker compose build` uses the default variant; build another with `NODE_VERSION=22.22.3 docker compose build`. To build every variant at once, run [`node/build-all.sh`](node/build-all.sh); to smoke-test the full stack for every variant, run [`node/test/smoke.sh`](node/test/smoke.sh) (or pass one variant name, e.g. `./test/smoke.sh node24`). `podman compose` works in place of `docker compose`; `build-all.sh` and `test/smoke.sh` auto-detect a working docker or podman engine (force one with `DOCKER=podman`).
 
 ## Why a custom image rather than features
 
@@ -132,13 +153,20 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 ```
 .
 ├── .github/workflows/
-│   └── build-node.yml               multi-arch matrix build + push to GHCR
-├── node/                            the Node devcontainer stack
+│   └── build.yml                    multi-arch base -> dev -> variant build + push to GHCR
+├── base/                            tier 1: minimal prod-capable base (all stacks)
+│   └── src/
+│       └── Dockerfile               debian:trixie-slim + org-wide essentials
+├── dev/                             tier 2: dev/CI tooling (all stacks)
+│   └── src/
+│       ├── Dockerfile               base + git/gh/jq/make/db clients + docker engine
+│       └── start-dockerd            opt-in Docker-in-Docker launcher for CI
+├── node/                            tier 3: the Node devcontainer stack
 │   ├── variants.json                Node/pnpm build variants + their tags
-│   ├── build-all.sh                 build every variant locally
+│   ├── build-all.sh                 build base + dev + every variant locally
 │   ├── compose.yaml                 local build + test stack
 │   ├── src/
-│   │   ├── Dockerfile               the app image definition
+│   │   ├── Dockerfile               the Node variant, layered on the dev tier
 │   │   ├── devcontainer-metadata.json   baked into the image as a label
 │   │   └── .dockerignore
 │   ├── examples/
@@ -149,4 +177,4 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 └── README.md
 ```
 
-Further stacks would sit alongside `node/` — a `go/` or `python/` directory with its own `variants.json`, and a matching `.github/workflows/build-<stack>.yml`.
+Further stacks would sit alongside `node/` — a `go/` or `python/` directory with its own `variants.json` — each layered on the shared `base/` + `dev/` tiers and added as a job in `.github/workflows/build.yml`.

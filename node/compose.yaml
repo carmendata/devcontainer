@@ -9,10 +9,13 @@ services:
   app:
     build:
       context: ./src
-      # Defaults to the newest variant; override to test another, e.g.
-      #   NODE_VARIANT=22-bookworm-slim docker compose build
+      # DEV_IMAGE defaults to the published dev tier; to build against a locally
+      # built dev image, run ../build-all.sh (which builds base -> dev -> the
+      # variants) and set DEV_IMAGE=devcontainer:dev. Override NODE_VERSION to
+      # test another variant, e.g. NODE_VERSION=22.22.3 docker compose build
       args:
-        NODE_VARIANT: ${NODE_VARIANT:-24-bookworm-slim}
+        DEV_IMAGE: ${DEV_IMAGE:-ghcr.io/carmendata/devcontainer:dev}
+        NODE_VERSION: ${NODE_VERSION:-24.16.0}
         PNPM_VERSION: ${PNPM_VERSION:-10.33.0}
     command: sleep infinity
     depends_on:
