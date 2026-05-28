@@ -29,9 +29,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # One stack-agnostic package; the variant lives in the tag (base, node22,
-  # node24, and later go, python, ...).
+  # Devcontainer images (incl. the base/dev tiers) publish here; the variant
+  # lives in the tag (base, dev, node22, node24, and later go, python, ...).
   IMAGE: ghcr.io/${{ github.repository_owner }}/devcontainer
+  # Lean production runtime bases publish to a separate package.
+  PROD_IMAGE: ghcr.io/${{ github.repository_owner }}/production
 
 jobs:
   # Build + push the shared base. Variants build FROM the immutable base-<sha>
@@ -153,7 +155,7 @@ jobs:
           echo "variants=$(jq -c '.variants' node/variants.json)" >> "$GITHUB_OUTPUT"
 
   node:
-    needs: [dev, load-matrix]
+    needs: [base, dev, load-matrix]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -181,18 +183,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Rolling tags come from node/variants.json; the <name>-<sha> tag is the
-      # immutable pin and is derived here.
+      # immutable pin. The same tags are derived for both the devcontainer image
+      # (IMAGE) and the production runtime base (PROD_IMAGE).
       - name: Assemble tags
         id: tags
         run: |
-          {
-            echo 'list<<EOF'
-            for t in $(echo '${{ toJSON(matrix.variant.tags) }}' | jq -r '.[]'); do
-              echo "${IMAGE}:${t}"
-            done
-            echo "${IMAGE}:${{ matrix.variant.name }}-${GITHUB_SHA::7}"
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
+          sha="${GITHUB_SHA::7}"
+          rolling=$(echo '${{ toJSON(matrix.variant.tags) }}' | jq -r '.[]')
+          emit() {  # $1 = output name, $2 = repo
+            {
+              echo "$1<<EOF"
+              for t in $rolling; do echo "$2:${t}"; done
+              echo "$2:${{ matrix.variant.name }}-${sha}"
+              echo EOF
+            } >> "$GITHUB_OUTPUT"
+          }
+          emit dev_list  "$IMAGE"
+          emit prod_list "$PROD_IMAGE"
 
       # devcontainer-metadata.json is kept out of the build context (see
       # node/src/.dockerignore) and applied as a label, so a metadata-only
@@ -201,19 +208,44 @@ jobs:
         id: dc_meta
         run: echo "json=$(jq -c . node/src/devcontainer-metadata.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      # Production runtime base (target prod): base + Node, non-root, no dev
+      # tooling. Built first so the shared node-build stage is cached for the
+      # devcontainer build below.
+      - name: Build and push production
         uses: docker/build-push-action@v6
         with:
           context: node/src
           file: node/src/Dockerfile
+          target: prod
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
           build-args: |
+            BASE_IMAGE=${{ needs.base.outputs.ref }}
+            NODE_VERSION=${{ matrix.variant.node }}
+          tags: ${{ steps.tags.outputs.prod_list }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.variant.name }}
+          cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
+
+      # Devcontainer image (target dev): dev tooling tier + the same Node + pnpm.
+      - name: Build and push devcontainer
+        uses: docker/build-push-action@v6
+        with:
+          context: node/src
+          file: node/src/Dockerfile
+          target: dev
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            BASE_IMAGE=${{ needs.base.outputs.ref }}
             DEV_IMAGE=${{ needs.dev.outputs.ref }}
             NODE_VERSION=${{ matrix.variant.node }}
             PNPM_VERSION=${{ matrix.variant.pnpm }}
-          tags: ${{ steps.tags.outputs.list }}
+          tags: ${{ steps.tags.outputs.dev_list }}
           labels: |
             devcontainer.metadata=${{ steps.dc_meta.outputs.json }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

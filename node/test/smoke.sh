@@ -44,7 +44,7 @@ echo "--> building base image (devcontainer:base)"
 "$DOCKER" build -t devcontainer:base ../base/src
 echo "--> building dev image (devcontainer:dev)"
 "$DOCKER" build --build-arg BASE_IMAGE=devcontainer:base -t devcontainer:dev ../dev/src
-export DEV_IMAGE=devcontainer:dev
+export BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev
 
 # Select variants to test: all of them, or one by name.
 if [ "$#" -gt 0 ]; then
@@ -115,6 +115,32 @@ while read -r v; do
     fi
 
     compose down -v >/dev/null 2>&1 || true
+
+    # Production image (target prod): base + Node, non-root, no dev tooling.
+    echo "--> build + check production image"
+    if "$DOCKER" build --target prod \
+            --build-arg "BASE_IMAGE=devcontainer:base" \
+            --build-arg "NODE_VERSION=${node}" \
+            -t "production:${name}" ./src >/dev/null 2>&1; then
+        prod_major=$("$DOCKER" run --rm "production:${name}" node -p 'process.versions.node.split(".")[0]' 2>/dev/null | tr -d '\r' || true)
+        [ "$prod_major" = "$major" ] \
+            && echo "  ok    prod node major is ${major}" \
+            || { echo "  FAIL  prod node major: expected ${major}, got ${prod_major:-unknown}"; failed=1; }
+
+        prod_uid=$("$DOCKER" run --rm "production:${name}" id -u 2>/dev/null | tr -d '\r' || true)
+        [ "$prod_uid" = "1000" ] \
+            && echo "  ok    prod runs as non-root (uid 1000)" \
+            || { echo "  FAIL  prod uid: expected 1000, got ${prod_uid:-unknown}"; failed=1; }
+
+        if "$DOCKER" run --rm "production:${name}" sh -c 'command -v docker' >/dev/null 2>&1; then
+            echo "  FAIL  prod unexpectedly ships the docker cli"; failed=1
+        else
+            echo "  ok    prod has no docker cli"
+        fi
+    else
+        echo "  FAIL  production image failed to build"
+        failed=1
+    fi
 
     if [ "$failed" -eq 0 ]; then
         echo "--> ${name} PASSED"

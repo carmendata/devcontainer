@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
-# Build all three tiers locally -- the same source of truth CI uses:
+# Build every tier and image locally -- the same source of truth CI uses:
 #   devcontainer:base  (minimal prod base)  ->  devcontainer:dev  (dev tooling)
-#   ->  devcontainer:<name>  for every variant in variants.json.
+# then, for every variant in variants.json, both targets of node/src/Dockerfile:
+#   production:<name>    the lean prod runtime base (base + node, non-root)
+#   devcontainer:<name>  the devcontainer image (dev + node + pnpm)
 #
 # Requires jq and a container builder (docker or podman -- whichever has a
 # working engine; force one with DOCKER=podman).
@@ -39,8 +41,15 @@ jq -c '.variants[]' variants.json | while read -r variant; do
     name=$(jq -r '.name' <<<"$variant")
     node=$(jq -r '.node' <<<"$variant")
     pnpm=$(jq -r '.pnpm' <<<"$variant")
-    echo "==> building ${name}  (node ${node}, pnpm ${pnpm})"
-    "$builder" build \
+    echo "==> building ${name} production  (production:${name}, node ${node})"
+    "$builder" build --target prod \
+        --build-arg "BASE_IMAGE=devcontainer:base" \
+        --build-arg "NODE_VERSION=${node}" \
+        -t "production:${name}" \
+        ./src
+    echo "==> building ${name} devcontainer  (devcontainer:${name}, pnpm ${pnpm})"
+    "$builder" build --target dev \
+        --build-arg "BASE_IMAGE=devcontainer:base" \
         --build-arg "DEV_IMAGE=devcontainer:dev" \
         --build-arg "NODE_VERSION=${node}" \
         --build-arg "PNPM_VERSION=${pnpm}" \

@@ -2,7 +2,7 @@
 
 A devcontainer setup, initially for Node.js projects: Node 22 and Node 24 (LTS) + pnpm `app` images, run alongside MySQL 8 and Redis 7 service containers via Docker Compose. Designed to be referenced from a small `.devcontainer/` directory in every downstream repo so updates land everywhere without per-repo changes.
 
-Every published image is built in three tiers: a minimal [`base/`](base/) (`debian:trixie-slim` + org-wide essentials, lean enough to use in **production** too), a [`dev/`](dev/) tier adding the dev/CI tooling and the Docker engine, and a thin language tier on top. All Node-stack code lives under [`node/`](node/); the repo is laid out so other stacks — a `go/` or `python/` directory — can be added alongside it later, each layered on the same `base` + `dev` tiers.
+Images are built in tiers from a minimal [`base/`](base/) (`debian:trixie-slim` + org-wide essentials), through a [`dev/`](dev/) tier adding the dev/CI tooling and the Docker engine, up to the language images. Each language ships **two** images from one source: the **devcontainer** image (`dev` tier + language + dev conveniences) and a lean, non-root **production** runtime base (`base` + language only) — see [Production images](#production-images). All Node-stack code lives under [`node/`](node/); the repo is laid out so other stacks — a `go/` or `python/` directory — can be added alongside it later, each reusing the same `base`/`dev` tiers.
 
 ## Using the image
 
@@ -84,9 +84,30 @@ The `app` image builds natively for both **`arm64` and `amd64`** — no emulatio
 
 **Shared tiers.** The `base` (`debian:trixie-slim` + essentials) and `dev` (base + tooling + docker) tiers are each built and pushed once, and every variant is layered on top of that exact `dev` image. So the heavy lower tiers are stored once in GHCR and pulled once onto a machine — pulling `node24` after `node22` (or a future `go` image) fetches only that variant's thin Node/runtime layer, not the tiers beneath. This is why Node is installed from the nodejs.org tarball in the variant rather than starting from the official `node:<major>-slim` image: a per-major Node base image would sit *below* the shared tooling and defeat that deduplication.
 
+## Production images
+
+Alongside each devcontainer image, CI publishes a matching **production runtime base** to `ghcr.io/<owner>/production`. It is built from the same [`node/src/Dockerfile`](node/src/Dockerfile) (the `prod` build target) and carries **byte-identical Node** — the Node tarball is fetched and verified once in a shared `node-build` stage and copied into both images. The difference is what sits underneath: the production image is just `base` + Node, so it has **none** of the dev/CI tooling — no docker engine, no `gh`, no `git`/`make`/db clients — and it runs as a **non-root** `node` user (uid/gid 1000) with `NODE_ENV=production`.
+
+Consume it from a downstream app's own Dockerfile:
+
+```dockerfile
+FROM ghcr.io/<owner>/production:node24
+WORKDIR /app
+COPY --chown=node:node . .
+# (switch to USER root first if you need to install OS packages, then back)
+CMD ["node", "server.js"]
+```
+
+Pin `production:node24` (rolling) or `production:node24-<sha>` (immutable), exactly like the devcontainer tags below. Keeping the production base in lock-step with the devcontainer's Node version is the point: developers and production run the same runtime.
+
 ## Tagging
 
-All images publish to a single package — **`ghcr.io/<owner>/devcontainer`** — with the tier/variant in the **tag**, not the image name. This keeps the package stack-agnostic: today `devcontainer:node22` and `devcontainer:node24`, with room to add `devcontainer:go`, `devcontainer:python`, and so on later. The two lower tiers are published too — `devcontainer:base` (usable as a production base) and `devcontainer:dev` — so they can be consumed directly; most repos pin a language variant tag.
+Two packages, with the tier/variant in the **tag**, not the image name:
+
+- **`ghcr.io/<owner>/devcontainer`** — the devcontainer images and their build tiers: `devcontainer:base`, `devcontainer:dev`, and the variants `devcontainer:node22` / `devcontainer:node24` (room for `:go`, `:python`, … later).
+- **`ghcr.io/<owner>/production`** — the lean production runtime bases: `production:node22` / `production:node24` (see [Production images](#production-images)).
+
+Both keep the package stack-agnostic. Most repos pin a language variant tag.
 
 The variants and the tags they publish are defined in [`node/variants.json`](node/variants.json). For each variant, CI publishes:
 
@@ -97,13 +118,23 @@ There is deliberately **no `latest` tag**: across multiple stacks sharing one pa
 
 ## Updating
 
-The images rebuild on every push to `main` that touches `base/`, `dev/`, or `node/`, weekly on Monday 04:00 UTC to pick up base-image and OS security updates, and on demand via `workflow_dispatch` — see [`.github/workflows/build.yml`](.github/workflows/build.yml). The workflow builds the tiers in order — `base`, then `dev`, then every variant. To change something everyone gets — a new extension, an extra system package, a Node or pnpm version — edit the relevant file and push to `main`.
+The images rebuild on every push to `main` that touches `base/`, `dev/`, or `node/`, weekly on Monday 04:00 UTC to pick up base-image and OS security updates, and on demand via `workflow_dispatch` — see [`.github/workflows/build.yml`](.github/workflows/build.yml). The workflow builds the tiers in order — `base`, then `dev`, then each variant (both its production and devcontainer images).
+
+`git push` saves work; the [`Makefile`](Makefile) drives the pipeline by hand for branch builds and on-demand re-runs (it wraps the GitHub CLI, so `gh` must be authenticated):
+
+```bash
+make deploy   # trigger build.yml on the current branch and watch it
+make runs     # list recent workflow runs
+make logs     # show the latest run's log (after a failure)
+```
+
+To change something everyone gets — a new extension, an extra system package, a Node or pnpm version — edit the relevant file and push to `main`.
 
 - `base/src/Dockerfile` — the minimal prod-capable base (`debian:trixie-slim` + essentials)
 - `dev/src/Dockerfile` — the dev/CI tier: common system packages, `gh`, the pinned Docker engine/buildx
 - `dev/src/start-dockerd` — the opt-in Docker-in-Docker daemon launcher for CI
 - `node/variants.json` — the Node/pnpm build variants and the tags each publishes
-- `node/src/Dockerfile` — the Node variant: Node version (tarball) + pnpm, layered on the `dev` tier
+- `node/src/Dockerfile` — multi-stage: the `prod` target (production runtime base) and the `dev` target (devcontainer image), sharing one Node install
 - `node/src/devcontainer-metadata.json` — extensions, settings, mounts, lifecycle hooks
 - `node/examples/compose.yaml` — the service definitions downstream repos copy
 
@@ -113,7 +144,7 @@ Two caveats on how changes propagate. Changes to `devcontainer-metadata.json` do
 
 ## Image visibility
 
-GHCR packages default to private. After the first successful build, go to the package's settings on GitHub and either set it to public (recommended for an internal-only org-wide devcontainer) or grant pull access to the orgs and teams that need it. Otherwise downstream `docker pull` fails with auth errors that aren't always obvious from the VS Code side.
+GHCR packages default to private. After the first successful build there are **two** packages — `devcontainer` and `production` — and each must be made visible independently: go to the package's settings on GitHub and either set it to public (recommended for an internal-only org-wide image) or grant pull access to the orgs and teams that need it. Otherwise downstream `docker pull` fails with auth errors that aren't always obvious from the VS Code side.
 
 ## Building locally
 
@@ -125,7 +156,7 @@ docker compose build              # build the app image (default variant)
 docker compose up -d --wait       # start app + mysql + redis
 ```
 
-By default `docker compose build` layers the app on the **published** `dev` image (`ghcr.io/<owner>/devcontainer:dev`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) (it builds `devcontainer:base` → `devcontainer:dev` → each variant), or build them and pass `DEV_IMAGE=devcontainer:dev docker compose build`.
+By default `docker compose build` layers the app on the **published** `base` and `dev` images (`ghcr.io/<owner>/devcontainer:{base,dev}`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) — it builds `devcontainer:base` → `devcontainer:dev` → then both targets of every variant (`production:<name>` and `devcontainer:<name>`) — or build the tiers and pass `BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev docker compose build`.
 
 `--wait` blocks until every healthcheck passes. Poke at the stack:
 
@@ -152,6 +183,7 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 
 ```
 .
+├── Makefile                         trigger/watch the build workflow (gh wrapper)
 ├── .github/workflows/
 │   └── build.yml                    multi-arch base -> dev -> variant build + push to GHCR
 ├── base/                            tier 1: minimal prod-capable base (all stacks)
@@ -166,8 +198,8 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 │   ├── build-all.sh                 build base + dev + every variant locally
 │   ├── compose.yaml                 local build + test stack
 │   ├── src/
-│   │   ├── Dockerfile               the Node variant, layered on the dev tier
-│   │   ├── devcontainer-metadata.json   baked into the image as a label
+│   │   ├── Dockerfile               multi-stage: prod (runtime base) + dev (devcontainer)
+│   │   ├── devcontainer-metadata.json   baked into the dev image as a label
 │   │   └── .dockerignore
 │   ├── examples/
 │   │   ├── devcontainer.json        downstream .devcontainer/ template
