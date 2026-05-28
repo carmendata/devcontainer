@@ -40,6 +40,8 @@ After changing the `.devcontainer/` config — or to pick up a newer published i
 
 `compose.yaml` pulls the published `app` image and defines the `mysql` and `redis` services. The `app` image carries its own VS Code extension list, settings, mount config, and post-attach hook via an embedded `devcontainer.metadata` label — the Dev Containers extension reads that label and merges it with `devcontainer.json`, so anything genuinely repo-specific composes with the image defaults rather than replacing them. Repo-specific infrastructure (an extra service, a different mount) goes in your copy of `compose.yaml`.
 
+> **Security note — SSH keys.** The image's metadata bind-mounts your host `~/.ssh` into the container (at `/root/.ssh-host`, and the container runs as `root`). This is convenient for git-over-SSH, but it means any code or VS Code extension running inside the devcontainer can read your private keys. If that exposure matters for your threat model, prefer **SSH agent forwarding** (don't mount the key material), or make the mount read-only — edit the `mounts` entry in `node/src/devcontainer-metadata.json`. The production image is unaffected (no such mount, runs non-root).
+
 ## What's in it
 
 The repo publishes several `app` image **variants** — each a Node major paired with a pnpm version — defined in [`node/variants.json`](node/variants.json):
