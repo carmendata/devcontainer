@@ -10,6 +10,7 @@ services:
   app:
     # Pick the tag for your Node major -- node22 or node24 (see the project README).
     image: ghcr.io/carmendata/devcontainer:node24
+    privileged: true        # required for in-container docker builds for CI
     command: sleep infinity
     volumes:
       - ..:/workspace:cached

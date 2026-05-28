@@ -64,12 +64,21 @@ The images are deliberately lean: no C/C++ toolchain. `make` is included, but `b
 The `dev` tier bundles the Docker engine, `docker buildx`, and a `start-dockerd` helper so a CI/release pipeline can build and push images from inside this container (Docker-in-Docker), with versions pinned for reproducibility. It is opt-in and used only by CI:
 
 ```sh
-# the CI job must run the container with --privileged
+# the container must be started privileged (privileged: true / --privileged)
 start-dockerd
 docker buildx build --platform linux/amd64,linux/arm64 -t <image> --push .
 ```
 
-`start-dockerd` launches `dockerd` and blocks until it is ready. The **devcontainer never calls it** — there, `mysql`/`redis` run as sibling containers on the *host* daemon via `compose.yaml`, the in-image `dockerd` stays stopped, and no `--privileged` is needed. Docker versions are pinned in [`dev/src/Dockerfile`](dev/src/Dockerfile); bump them deliberately.
+`start-dockerd` launches `dockerd` and blocks until it is ready, and **fails fast** if the container isn't privileged (it checks for `CAP_SYS_ADMIN` rather than timing out). Grant privilege with `privileged: true` on the service in your `.devcontainer/compose.yaml` (or the release profile), e.g.:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/<owner>/devcontainer:node24
+    privileged: true        # required for in-container dockerd (DinD)
+```
+
+The daemon never starts on its own — `CMD` stays `sleep infinity` — so a container left unprivileged simply never runs it. Docker versions are pinned in [`dev/src/Dockerfile`](dev/src/Dockerfile); bump them deliberately.
 
 Companion service containers, from official upstream images:
 

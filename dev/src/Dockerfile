@@ -37,12 +37,13 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Docker engine + buildx (Docker-in-Docker for CI release builds) --------
-# Baked in only for CI/release jobs that build images: such a job runs the image
-# with --privileged and calls `start-dockerd` (see start-dockerd) before its
-# `docker buildx build` steps. Devcontainers never start this daemon -- their
-# mysql/redis siblings run on the *host* daemon via the stack compose file, so
-# dockerd here stays stopped and no --privileged is needed for dev use.
+# --- Docker engine + buildx (Docker-in-Docker for release image builds) -----
+# Baked in so a container that needs to build release images can run its own
+# Docker daemon. That requires the container to be started with --privileged
+# (set `privileged: true` on the service); then call `start-dockerd` (see
+# start-dockerd) before the `docker buildx build` steps. The daemon is never
+# started automatically -- CMD stays `sleep infinity` and start-dockerd is
+# invoked explicitly -- so a container left unprivileged simply never runs it.
 #
 # Versions are pinned for reproducible release builds; bump deliberately rather
 # than letting them float. Verify the strings exist for both amd64 and arm64 in

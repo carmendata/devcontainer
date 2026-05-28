@@ -1,17 +1,32 @@
 #!/usr/bin/env bash
-# Start the in-container Docker daemon for CI/release image builds, and block
-# until it is ready to accept connections.
+# Start the in-container Docker daemon (Docker-in-Docker) for CI/release image
+# builds, and block until it is ready to accept connections.
 #
-# This is opt-in: the devcontainer never calls it. There, mysql/redis run as
-# sibling containers on the *host* daemon via node/compose.yaml, and dockerd
-# inside this container stays stopped. A CI/release job that needs to build
-# images runs this image with --privileged and invokes `start-dockerd` before
-# its `docker build` / `docker buildx build` steps.
+# DinD requires the container to run with --privileged: dockerd needs
+# CAP_SYS_ADMIN plus netfilter/cgroup/mount-propagation access. Start the
+# devcontainer (or a dedicated release profile) with `privileged: true`, then
+# call this before `docker build` / `docker buildx build`.
 set -euo pipefail
 
-if docker info >/dev/null 2>&1; then
+# Already started in this container? Check for the dockerd process directly --
+# do not probe `docker info`, which could be answered by some other daemon.
+if pgrep -x dockerd >/dev/null 2>&1; then
   echo "dockerd already running"
   exit 0
+fi
+
+# Fail fast if we lack the privileges dockerd needs, instead of starting it and
+# waiting out a confusing timeout. --privileged grants the full capability set,
+# including CAP_SYS_ADMIN (bit 21 of CapEff in /proc/self/status).
+capeff=$(awk '/^CapEff:/{print $2}' /proc/self/status 2>/dev/null || echo 0)
+if (( ! ((0x${capeff:-0} >> 21) & 1) )); then
+  cat >&2 <<'EOF'
+start-dockerd: refusing to start -- this container lacks CAP_SYS_ADMIN, so
+dockerd cannot run here. Docker-in-Docker requires the container to run with
+--privileged. Set `privileged: true` on the service (or pass --privileged to
+docker run) for the devcontainer / release container that builds images.
+EOF
+  exit 1
 fi
 
 echo "starting dockerd..."
