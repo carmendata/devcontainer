@@ -118,9 +118,9 @@ There is deliberately **no `latest` tag**: across multiple stacks sharing one pa
 
 ## Updating
 
-The images rebuild on every push to `main` that touches `base/`, `dev/`, or `node/`, weekly on Monday 04:00 UTC to pick up base-image and OS security updates, and on demand via `workflow_dispatch` — see [`.github/workflows/build.yml`](.github/workflows/build.yml). The workflow builds the tiers in order — `base`, then `dev`, then each variant (both its production and devcontainer images).
+Builds are **not** triggered by `git push` — pushing only saves work. The workflow runs on demand via `workflow_dispatch` (driven by `make deploy`, below) and weekly on Monday 04:00 UTC to pick up base-image and OS security updates — see [`.github/workflows/build.yml`](.github/workflows/build.yml). It builds the tiers in order — `base`, then `dev`, then each variant (both its production and devcontainer images).
 
-`git push` saves work; the [`Makefile`](Makefile) drives the pipeline by hand for branch builds and on-demand re-runs (it wraps the GitHub CLI, so `gh` must be authenticated):
+The [`Makefile`](Makefile) drives the pipeline (it wraps the GitHub CLI, so `gh` must be authenticated):
 
 ```bash
 make deploy   # trigger build.yml on the current branch and watch it

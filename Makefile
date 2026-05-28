@@ -2,11 +2,11 @@
 # trigger and watch the GitHub Actions workflow that builds and pushes the
 # base -> dev -> node image tiers to GHCR.
 #
-# Pushing to `main` already auto-runs the workflow; these targets are for
-# building a feature branch on demand, or re-running to pick up a refreshed
-# base image. Requires the GitHub CLI (`gh`) authenticated against this repo.
-# Note: dispatching against a branch only works once build.yml exists on the
-# default branch.
+# Builds are NOT triggered by `git push` -- the workflow has no push trigger, so
+# pushing only saves work. Use `make deploy` to build on demand (a weekly cron
+# also rebuilds for security updates). Requires the GitHub CLI (`gh`)
+# authenticated against this repo. Note: dispatching against a branch only works
+# once build.yml exists on the default branch.
 
 WORKFLOW := build.yml
 REF      ?= $(shell git rev-parse --abbrev-ref HEAD)

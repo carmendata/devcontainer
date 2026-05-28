@@ -12,13 +12,9 @@ name: build
 # devcontainer run time (see node/examples/compose.yaml).
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'base/**'
-      - 'dev/**'
-      - 'node/**'
-      - '.github/workflows/build.yml'
+  # No push trigger: `git push` only saves work. Builds are triggered on demand
+  # via workflow_dispatch (`make deploy`), plus a weekly run for security
+  # updates. Remove the schedule too if you want builds to be exclusively manual.
   schedule:
     # Monday 04:00 UTC -- pick up base-image and OS security updates.
     - cron: '0 4 * * 1'
