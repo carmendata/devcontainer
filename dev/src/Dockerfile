@@ -21,9 +21,19 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         curl gnupg xz-utils \
         git openssh-client \
-        jq make less iproute2 procps iptables \
+        jq make less vim iproute2 procps iptables \
         sqlite3 redis-tools default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
+
+# --- git-subtree ------------------------------------------------------------
+# Debian's git package does not put `git-subtree` on PATH, but the repo
+# bootstrap (init.dev.sh) relies on `git subtree add/pull` to vendor .ci/.
+# Fetch the subtree script pinned to the installed git version (not master, to
+# avoid drift against the installed git's internals) and drop it on PATH.
+RUN GIT_VERSION="$(git --version | awk '{print $3}')" \
+    && curl -fsSL "https://raw.githubusercontent.com/git/git/v${GIT_VERSION}/contrib/subtree/git-subtree.sh" \
+        -o /usr/local/bin/git-subtree \
+    && chmod 0755 /usr/local/bin/git-subtree
 
 # --- GitHub CLI -------------------------------------------------------------
 # gh is not in Debian's default repos; install from GitHub's apt repository.
