@@ -28,7 +28,6 @@ services:
     command: ["--default-authentication-plugin=mysql_native_password"]
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./initdb:/docker-entrypoint-initdb.d:ro # this is not working on windows, but it is on macOS and Linux, use 'make reset' to seed the db on windows
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
       interval: 5s
