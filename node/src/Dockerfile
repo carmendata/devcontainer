@@ -87,6 +87,14 @@ RUN corepack enable \
     && node --version \
     && pnpm --version
 
+# --- baked reference config -------------------------------------------------
+# The canonical devcontainer.json + compose.yaml that downstream repos copy into
+# their .devcontainer/. Baked here (dev target only -- never in prod) so an
+# in-container CI tool can diff the repo's copies against the current standard
+# and flag drift. Reference only -- not consumed by the devcontainer runtime.
+# Requires the build context to be node/ (not node/src) so examples/ is in scope.
+COPY examples/devcontainer.json examples/compose.yaml /usr/local/share/devcontainer/
+
 # The devcontainer.metadata label is applied at build time by the CI workflow
 # (see .github/workflows/build.yml) from src/devcontainer-metadata.json.
 

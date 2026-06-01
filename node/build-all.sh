@@ -46,7 +46,7 @@ jq -c '.variants[]' variants.json | while read -r variant; do
         --build-arg "BASE_IMAGE=devcontainer:base" \
         --build-arg "NODE_VERSION=${node}" \
         -t "production:${name}" \
-        ./src
+        -f src/Dockerfile .
     echo "==> building ${name} devcontainer  (devcontainer:${name}, pnpm ${pnpm})"
     "$builder" build --target dev \
         --build-arg "BASE_IMAGE=devcontainer:base" \
@@ -54,7 +54,7 @@ jq -c '.variants[]' variants.json | while read -r variant; do
         --build-arg "NODE_VERSION=${node}" \
         --build-arg "PNPM_VERSION=${pnpm}" \
         -t "devcontainer:${name}" \
-        ./src
+        -f src/Dockerfile .
 done
 
 echo "==> done"

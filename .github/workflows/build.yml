@@ -202,7 +202,7 @@ jobs:
           emit prod_list "$PROD_IMAGE"
 
       # devcontainer-metadata.json is kept out of the build context (see
-      # node/src/.dockerignore) and applied as a label, so a metadata-only
+      # node/.dockerignore) and applied as a label, so a metadata-only
       # change does not invalidate cached image layers.
       - name: Read devcontainer metadata
         id: dc_meta
@@ -214,7 +214,7 @@ jobs:
       - name: Build and push production
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          context: node/src
+          context: node
           file: node/src/Dockerfile
           target: prod
           platforms: linux/amd64,linux/arm64
@@ -234,7 +234,7 @@ jobs:
       - name: Build and push devcontainer
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          context: node/src
+          context: node
           file: node/src/Dockerfile
           target: dev
           platforms: linux/amd64,linux/arm64

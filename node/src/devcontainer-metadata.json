@@ -2,20 +2,21 @@
   {
     "overrideCommand": false,
     "remoteUser": "root",
-    "mounts": [
-      "source=${localEnv:USERPROFILE}${localEnv:HOME}/.ssh,target=/root/.ssh-host,type=bind,consistency=cached"
+    "remoteEnv": {
+      "NODE_ENV": "development",
+      "GITHUB_AUTH_TOKEN": "${localEnv:GITHUB_AUTH_TOKEN}"
+    },
+    "forwardPorts": [
+      3000,
+      "mysql:3306",
+      "redis:6379"
     ],
-    "postAttachCommand": "git config --global --add safe.directory ${containerWorkspaceFolder} && ([ -f ./init.dev.sh ] && ./init.dev.sh || true)",
-    "initializeCommand": "echo -e '\\n\\nInitialising your development container ... please wait.'",
+    "postAttachCommand": "make init",
     "customizations": {
       "vscode": {
         "extensions": [
           "dbaeumer.vscode-eslint",
-          "esbenp.prettier-vscode",
-          "PKief.material-icon-theme",
-          "mtxr.sqltools-driver-mysql",
-          "mtxr.sqltools",
-          "shd101wyy.markdown-preview-enhanced"
+          "esbenp.prettier-vscode"
         ],
         "settings": {
           "editor.formatOnSave": true,

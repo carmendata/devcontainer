@@ -1,0 +1,14 @@
+# Build context is node/ (not node/src) so the Dockerfile can COPY examples/
+# into the dev image as the baked drift-check reference. Keep the context lean
+# and preserve layer caching.
+
+# Applied via --label at build time, not COPY'd in -- excluding it means
+# metadata-only changes don't invalidate cached layers.
+src/devcontainer-metadata.json
+
+# Not needed inside the image (root-level compose is the local build/test stack;
+# examples/compose.yaml is kept -- it's the baked reference).
+build-all.sh
+variants.json
+compose.yaml
+test/

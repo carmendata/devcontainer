@@ -1,0 +1,49 @@
+# Baked to /root/.bashrc in the dev tier: a shared, branch-aware prompt for
+# every devcontainer. Stack-agnostic; not present in the production image
+# (which has no dev tier and runs non-interactively as the node user).
+
+# Interactive shells only -- a .bashrc can be sourced non-interactively.
+case $- in
+  *i*) ;;
+    *) return ;;
+esac
+
+# History: dedupe, append rather than overwrite, keep a decent backlog.
+HISTCONTROL=ignoreboth
+HISTSIZE=10000
+HISTFILESIZE=20000
+shopt -s histappend checkwinsize
+
+# --- colours ----------------------------------------------------------------
+# Use the raw readline non-printing markers \001 (start) / \002 (end) rather
+# than the \[ \] prompt aliases. \[ \] are decoded by bash only while parsing
+# PS1 itself -- BEFORE the $(git_branch) command substitution runs -- so colours
+# emitted from inside a function must carry \001/\002 or they print literally.
+# These work in the static PS1 parts too, so one set covers both uses.
+_c() { printf '\001\e[%sm\002' "$1"; }
+RESET="$(_c 0)";  BOLD="$(_c 1)"
+RED="$(_c 31)";   GREEN="$(_c 32)"; YELLOW="$(_c 33)"
+BLUE="$(_c 34)";  CYAN="$(_c 36)"
+
+# Branch name (or short SHA when detached); green if clean, red if dirty.
+# Prints nothing outside a git repo.
+git_branch() {
+  local branch
+  branch=$(git symbolic-ref --short -q HEAD 2>/dev/null) \
+    || branch=$(git rev-parse --short -q HEAD 2>/dev/null) \
+    || return
+  if git diff --quiet --ignore-submodules HEAD 2>/dev/null; then
+    printf '(%s%s%s)' "$GREEN" "$branch" "$RESET"
+  else
+    printf '(%s%s%s)' "$RED" "$branch" "$RESET"
+  fi
+}
+
+# Prompt: \n user@host:cwd (branch) \n $
+PS1="\n${BOLD}${BLUE}\u@\h${RESET}:${CYAN}\w${RESET} ${YELLOW}\$(git_branch)${RESET}\n\$ "
+
+# --- aliases ----------------------------------------------------------------
+alias ls='ls --color=auto'
+alias ll='ls -alF'
+alias la='ls -A'
+alias grep='grep --color=auto'

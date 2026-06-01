@@ -1,0 +1,4 @@
+# Baked to /root/.bash_profile in the dev tier. Login shells (bash -l, some
+# docker exec setups) read this rather than ~/.bashrc, so source .bashrc here to
+# get the same prompt and aliases everywhere.
+[ -f ~/.bashrc ] && . ~/.bashrc

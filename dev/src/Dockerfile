@@ -25,6 +25,15 @@ RUN apt-get update \
         sqlite3 redis-tools default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
+# --- shell + mysql client defaults ------------------------------------------
+# Bake the shared interactive shell config (branch-aware prompt) and the mysql
+# client config so `mysql`/`mysqladmin` reach the compose 'mysql' service with
+# no per-repo .devcontainer files. .my.cnf is 0600 by convention for a client
+# config that may later hold credentials.
+COPY --chmod=0644 bashrc /root/.bashrc
+COPY --chmod=0644 bash_profile /root/.bash_profile
+COPY --chmod=0600 my.cnf /root/.my.cnf
+
 # --- git-subtree ------------------------------------------------------------
 # Debian's git package does not put `git-subtree` on PATH, but the repo
 # bootstrap (init.dev.sh) relies on `git subtree add/pull` to vendor .ci/.

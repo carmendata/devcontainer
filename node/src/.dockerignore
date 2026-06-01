@@ -1,4 +1,0 @@
-# The metadata JSON is applied via --label at build time, not COPY'd in.
-# Excluding it from the context means metadata-only changes don't invalidate
-# the cached layers — only the label changes, which is cheap.
-devcontainer-metadata.json

@@ -4,8 +4,6 @@
 # The app service pulls the published image; mysql and redis run as their own
 # containers. From inside the devcontainer, reach them by service name:
 # host "mysql" port 3306, host "redis" port 6379.
-name: my-project
-
 services:
   app:
     # Pick the tag for your Node major -- node22 or node24 (see the project README).
@@ -30,11 +28,12 @@ services:
     command: ["--default-authentication-plugin=mysql_native_password"]
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./initdb:/docker-entrypoint-initdb.d:ro # this is not working on windows, but it is on macOS and Linux, use 'make reset' to seed the db on windows
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 60 # some of the initdb scripts can take a while to run, so we need to be patient
 
   redis:
     image: redis:7.4
