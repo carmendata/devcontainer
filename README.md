@@ -151,7 +151,7 @@ To change something everyone gets — a new extension, an extra system package, 
 
 To add a build variant — a new Node major, or a second pnpm version for an existing one — add an object to `node/variants.json` with a unique `name`, the full `node` version (e.g. `24.16.0`), a `pnpm` version, and the rolling `tags` to publish. For example, a second pnpm line for Node 24: `{ "name": "node24-pnpm9", "node": "24.16.0", "pnpm": "9.15.0", "tags": ["node24-pnpm9"] }`. CI picks it up on the next push — no workflow change needed.
 
-Two caveats on how changes propagate. Changes to `devcontainer-metadata.json` don't rebuild the image layers — the JSON is excluded from the Docker build context via `node/src/.dockerignore` and applied as a label at build time; pushing a metadata-only change still produces a new image but is cheap. And changes to `node/examples/compose.yaml` (e.g. a new MySQL version) reach a downstream repo only when it re-copies the file — unlike the `app` image, which is pulled automatically on the next container rebuild.
+Two caveats on how changes propagate. Changes to `devcontainer-metadata.json` don't rebuild the image layers — the JSON is excluded from the Docker build context via `node/.dockerignore` and applied as a label at build time; pushing a metadata-only change still produces a new image but is cheap. And changes to `node/examples/compose.yaml` (e.g. a new MySQL version) reach a downstream repo only when it re-copies the file — unlike the `app` image, which is pulled automatically on the next container rebuild.
 
 ## Image visibility
 
@@ -208,11 +208,11 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 │   ├── variants.json                Node/pnpm build variants + their tags
 │   ├── build-all.sh                 build base + dev + every variant locally
 │   ├── compose.yaml                 local build + test stack
+│   ├── .dockerignore                build context is node/; keeps it lean & cache-stable
 │   ├── src/
 │   │   ├── Dockerfile               multi-stage: prod (runtime base) + dev (devcontainer)
-│   │   ├── devcontainer-metadata.json   baked into the dev image as a label
-│   │   └── .dockerignore
-│   ├── examples/
+│   │   └── devcontainer-metadata.json   baked into the dev image as a label
+│   ├── examples/                    copied downstream, AND baked into the dev image as the CI drift-check reference
 │   │   ├── devcontainer.json        downstream .devcontainer/ template
 │   │   └── compose.yaml             downstream service definitions
 │   └── test/
