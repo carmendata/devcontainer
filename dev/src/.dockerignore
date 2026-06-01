@@ -1,6 +1,9 @@
-# This build context should only ever ship the Dockerfile and start-dockerd.
-# Ignore everything, then re-include the one file COPY'd into the image, so a
-# stray secret/.env dropped into dev/src can never leak into the dev tier even
-# if a future COPY widens its scope.
+# This build context should only ever ship the files COPY'd into the image.
+# Ignore everything, then re-include exactly those files, so a stray secret/.env
+# dropped into dev/src can never leak into the dev tier even if a future COPY
+# widens its scope. Add a matching `!name` line whenever you COPY a new file.
 *
 !start-dockerd
+!bashrc
+!bash_profile
+!my.cnf
