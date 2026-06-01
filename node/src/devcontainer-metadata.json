@@ -6,6 +6,9 @@
       "NODE_ENV": "development",
       "GITHUB_AUTH_TOKEN": "${localEnv:GITHUB_AUTH_TOKEN}"
     },
+    "mounts": [
+      "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gitconfig,target=/root/.gitconfig,type=bind,readonly"
+    ],
     "forwardPorts": [
       3000,
       "mysql:3306",
