@@ -13,7 +13,7 @@
   },
   "forwardPorts": [3000, "mysql:3306", "redis:6379"],
   "postCreateCommand": "mkdir -p /usr/local/share/ci && gh release download ${CI_VERSION} --repo ${CI_REPO} --pattern ci.tar.gz --output /tmp/ci.tar.gz && tar xzf /tmp/ci.tar.gz -C /usr/local/share/ci && rm -f /tmp/ci.tar.gz",
-  "postAttachCommand": "make init",
+  "postAttachCommand": "cp /usr/local/share/ci/templates/Makefile.root Makefile && make init",
   "customizations": {
     "vscode": {
       "extensions": [
