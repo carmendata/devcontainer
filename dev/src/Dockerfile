@@ -85,5 +85,13 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=0755 start-dockerd /usr/local/bin/start-dockerd
 
+# Local cache of the alfie-ops .ci/ tooling, so `make init` has a current copy
+# without a download. (.ci/ is fetched from the release at build time; `make init`
+# re-validates it and refetches if it ever lags this image.)
+COPY ci.tar.gz /tmp/ci.tar.gz
+RUN mkdir -p /usr/local/share/ci \
+    && tar xzf /tmp/ci.tar.gz -C /usr/local/share/ci \
+    && rm -f /tmp/ci.tar.gz
+
 # Keep the container alive when run directly; compose overrides this per service.
 CMD ["sleep", "infinity"]

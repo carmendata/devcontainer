@@ -19,7 +19,8 @@ on:
     # Monday 04:00 UTC -- pick up base-image and OS security updates.
     - cron: '0 4 * * 1'
   workflow_dispatch:
-
+  repository_dispatch:          # ← alfie-ops release.sh fires this
+    types: [ci-released]
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -48,7 +49,7 @@ jobs:
       ref: ${{ steps.ref.outputs.ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       # QEMU lets the amd64 runner also build the linux/arm64 image.
       - name: Set up QEMU
@@ -98,7 +99,7 @@ jobs:
       ref: ${{ steps.ref.outputs.ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -113,6 +114,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Fetch alfie-ops .ci/ (released version, or latest)
+        env:
+          GH_TOKEN: ${{ secrets.ALFIE_OPS_TOKEN }}   # see caveat below
+        run: |
+          gh release download ${{ github.event.client_payload.version }} \
+            --repo ${{ github.repository_owner }}/alfie-ops \
+            --pattern ci.tar.gz --output dev/src/ci.tar.gz
+            
       - name: Derive dev ref
         id: ref
         run: echo "ref=${IMAGE}:dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
@@ -142,7 +151,7 @@ jobs:
     outputs:
       variants: ${{ steps.load.outputs.variants }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Load and validate variants.json
         id: load
         run: |
@@ -167,7 +176,7 @@ jobs:
     name: ${{ matrix.variant.name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
