@@ -94,6 +94,13 @@ RUN [ -n "${PNPM_VERSION}" ] || { echo "ERROR: build-arg PNPM_VERSION is require
     && node --version \
     && pnpm --version
 
+# --- npm/pnpm registry config -----------------------------------------------
+# GitHub Packages registry for the @carmendata scope. The token is NOT baked:
+# npm/pnpm expand ${GITHUB_AUTH_TOKEN} from the environment at runtime, so this
+# ships safely in the public image and resolves per-developer (an unauthorized
+# dev gets an empty token -> @carmendata installs fail, same gate as the CI fetch).
+COPY --chmod=0644 src/npmrc /root/.npmrc
+
 # --- baked reference config -------------------------------------------------
 # The canonical devcontainer.json + compose.yaml that downstream repos copy into
 # their .devcontainer/. Baked here (dev target only -- never in prod) so an
