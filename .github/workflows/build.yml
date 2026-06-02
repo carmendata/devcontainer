@@ -70,7 +70,7 @@ jobs:
         run: echo "ref=${IMAGE}:base-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push base
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: base/src
           file: base/src/Dockerfile
@@ -119,7 +119,7 @@ jobs:
         run: echo "ref=${IMAGE}:dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push dev
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: dev/src
           file: dev/src/Dockerfile
@@ -206,7 +206,7 @@ jobs:
       # tooling. Built first so the shared node-build stage is cached for the
       # devcontainer build below.
       - name: Build and push production
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: node
           file: node/src/Dockerfile
@@ -226,7 +226,7 @@ jobs:
 
       # Devcontainer image (target dev): dev tooling tier + the same Node + pnpm.
       - name: Build and push devcontainer
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: node
           file: node/src/Dockerfile
