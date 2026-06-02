@@ -95,8 +95,5 @@ RUN corepack enable \
 # Requires the build context to be node/ (not node/src) so examples/ is in scope.
 COPY examples/devcontainer.json examples/compose.yaml /usr/local/share/devcontainer/
 
-# The devcontainer.metadata label is applied at build time by the CI workflow
-# (see .github/workflows/build.yml) from src/devcontainer-metadata.json.
-
 # Keep the container alive when run directly; compose overrides this per service.
 CMD ["sleep", "infinity"]

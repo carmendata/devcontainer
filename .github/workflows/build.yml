@@ -201,13 +201,6 @@ jobs:
           emit dev_list  "$IMAGE"
           emit prod_list "$PROD_IMAGE"
 
-      # devcontainer-metadata.json is kept out of the build context (see
-      # node/.dockerignore) and applied as a label, so a metadata-only
-      # change does not invalidate cached image layers.
-      - name: Read devcontainer metadata
-        id: dc_meta
-        run: echo "json=$(jq -c . node/src/devcontainer-metadata.json)" >> "$GITHUB_OUTPUT"
-
       # Production runtime base (target prod): base + Node, non-root, no dev
       # tooling. Built first so the shared node-build stage is cached for the
       # devcontainer build below.
@@ -247,7 +240,6 @@ jobs:
             PNPM_VERSION=${{ matrix.variant.pnpm }}
           tags: ${{ steps.tags.outputs.dev_list }}
           labels: |
-            devcontainer.metadata=${{ steps.dc_meta.outputs.json }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.variant.name }}
