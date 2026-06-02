@@ -6,9 +6,13 @@
   "overrideCommand": false,
   "remoteEnv": {
     "NODE_ENV": "development",
-    "GITHUB_AUTH_TOKEN": "${localEnv:GITHUB_AUTH_TOKEN}"
+    "GITHUB_AUTH_TOKEN": "${localEnv:GITHUB_AUTH_TOKEN}",
+    "GH_TOKEN": "${localEnv:GITHUB_AUTH_TOKEN}",
+    "CI_REPO": "carmendata/alfie-ops",
+    "CI_VERSION": "" /* empty is latest */
   },
   "forwardPorts": [3000, "mysql:3306", "redis:6379"],
+  "postCreateCommand": "mkdir -p /usr/local/share/ci && gh release download ${CI_VERSION} --repo ${CI_REPO} --pattern ci.tar.gz --output /tmp/ci.tar.gz && tar xzf /tmp/ci.tar.gz -C /usr/local/share/ci && rm -f /tmp/ci.tar.gz",
   "postAttachCommand": "make init",
   "customizations": {
     "vscode": {
