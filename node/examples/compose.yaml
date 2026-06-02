@@ -10,6 +10,11 @@ services:
     # reference copy of this file carrying its OWN tag, so CI re-copying it
     # preserves the major your repo runs rather than resetting it. See the README.
     image: ghcr.io/carmendata/devcontainer:node24
+    # Always re-check the registry on `up` so the rolling tag refreshes to the
+    # latest published build (Compose otherwise reuses a stale cached image).
+    # Caveat: this FAILS the start if you're offline, even when a usable image
+    # is cached -- drop this line (or set `missing`) if you need offline starts.
+    pull_policy: always
     privileged: true        # required for in-container docker builds for CI
     command: sleep infinity
     volumes:
