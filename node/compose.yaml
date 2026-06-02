@@ -13,14 +13,17 @@ services:
       # node-build stage (FROM BASE_IMAGE) -- so both tier images are needed.
       # BASE_IMAGE/DEV_IMAGE default to the published tiers; to build against
       # locally built tiers, run ../build-all.sh and set
-      # BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev. Override
-      # NODE_VERSION to test another variant, e.g.
-      # NODE_VERSION=22.22.3 docker compose build
+      # BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev.
+      # NODE_VERSION/PNPM_VERSION/VARIANT_TAG are REQUIRED (no defaults -- they
+      # live only in variants.json). Pass them, e.g.:
+      #   NODE_VERSION=22.22.3 PNPM_VERSION=10.33.0 VARIANT_TAG=node22 docker compose build
+      # or just run ../build-all.sh, which reads variants.json for you.
       args:
         BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/carmendata/devcontainer:base}
         DEV_IMAGE: ${DEV_IMAGE:-ghcr.io/carmendata/devcontainer:dev}
-        NODE_VERSION: ${NODE_VERSION:-24.16.0}
-        PNPM_VERSION: ${PNPM_VERSION:-10.33.0}
+        NODE_VERSION: ${NODE_VERSION:?set NODE_VERSION from node/variants.json, e.g. 24.16.0}
+        PNPM_VERSION: ${PNPM_VERSION:?set PNPM_VERSION from node/variants.json}
+        VARIANT_TAG: ${VARIANT_TAG:?set VARIANT_TAG to the variant name, e.g. node24}
     command: sleep infinity
     depends_on:
       mysql:

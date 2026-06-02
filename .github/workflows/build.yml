@@ -238,6 +238,7 @@ jobs:
             DEV_IMAGE=${{ needs.dev.outputs.ref }}
             NODE_VERSION=${{ matrix.variant.node }}
             PNPM_VERSION=${{ matrix.variant.pnpm }}
+            VARIANT_TAG=${{ matrix.variant.name }}
           tags: ${{ steps.tags.outputs.dev_list }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

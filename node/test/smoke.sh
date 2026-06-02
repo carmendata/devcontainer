@@ -75,7 +75,7 @@ while read -r v; do
 
     echo
     echo "=== variant: ${name}  (node ${node}, pnpm ${pnpm}) ==="
-    export NODE_VERSION="$node" PNPM_VERSION="$pnpm"
+    export NODE_VERSION="$node" PNPM_VERSION="$pnpm" VARIANT_TAG="$name"
     failed=0
 
     echo "--> build + start stack"

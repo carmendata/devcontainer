@@ -6,7 +6,9 @@
 # host "mysql" port 3306, host "redis" port 6379.
 services:
   app:
-    # Pick the tag for your Node major -- node22 or node24 (see the project README).
+    # Node major: edit this tag (node22 | node24). Each published image bakes a
+    # reference copy of this file carrying its OWN tag, so CI re-copying it
+    # preserves the major your repo runs rather than resetting it. See the README.
     image: ghcr.io/carmendata/devcontainer:node24
     privileged: true        # required for in-container docker builds for CI
     command: sleep infinity

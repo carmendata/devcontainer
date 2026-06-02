@@ -53,6 +53,7 @@ jq -c '.variants[]' variants.json | while read -r variant; do
         --build-arg "DEV_IMAGE=devcontainer:dev" \
         --build-arg "NODE_VERSION=${node}" \
         --build-arg "PNPM_VERSION=${pnpm}" \
+        --build-arg "VARIANT_TAG=${name}" \
         -t "devcontainer:${name}" \
         -f src/Dockerfile .
 done

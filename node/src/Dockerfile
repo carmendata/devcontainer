@@ -23,12 +23,14 @@ ARG DEV_IMAGE=ghcr.io/carmendata/devcontainer:dev
 # sha256 against that verified manifest -- the same chain the official node
 # image uses, so a tampered tarball OR checksum file is rejected.
 FROM ${BASE_IMAGE} AS node-build
-ARG NODE_VERSION=24.16.0
+# Required, no default -- the version lives only in node/variants.json (DRY).
+ARG NODE_VERSION
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         curl xz-utils gnupg dirmngr \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
+    [ -n "${NODE_VERSION}" ] || { echo "ERROR: build-arg NODE_VERSION is required -- see node/variants.json" >&2; exit 1; }; \
     dpkg_arch="$(dpkg --print-architecture)"; \
     case "$dpkg_arch" in \
         amd64) node_arch='x64' ;; \
@@ -76,13 +78,18 @@ CMD ["node"]
 
 # --- dev: devcontainer image (dev tooling + Node + pnpm) --------------------
 FROM ${DEV_IMAGE} AS dev
-ARG PNPM_VERSION=10.33.0
+# Required, no defaults -- these live only in node/variants.json (DRY).
+ARG PNPM_VERSION
+# Rolling image tag for THIS variant (e.g. node22), baked into the reference
+# compose.yaml below so a repo's CI copy respects the image it actually runs.
+ARG VARIANT_TAG
 COPY --from=node-build /opt/node/ /usr/local/
 ENV NODE_ENV=development \
     PNPM_HOME=/usr/local/share/pnpm \
     PATH=/usr/local/share/pnpm:$PATH
 # pnpm via corepack (corepack ships inside the Node tarball).
-RUN corepack enable \
+RUN [ -n "${PNPM_VERSION}" ] || { echo "ERROR: build-arg PNPM_VERSION is required -- see node/variants.json" >&2; exit 1; } \
+    && corepack enable \
     && corepack prepare pnpm@${PNPM_VERSION} --activate \
     && node --version \
     && pnpm --version
@@ -90,10 +97,16 @@ RUN corepack enable \
 # --- baked reference config -------------------------------------------------
 # The canonical devcontainer.json + compose.yaml that downstream repos copy into
 # their .devcontainer/. Baked here (dev target only -- never in prod) so an
-# in-container CI tool can diff the repo's copies against the current standard
-# and flag drift. Reference only -- not consumed by the devcontainer runtime.
+# in-container CI tool can diff/copy the repo's files against the current
+# standard. Reference only -- not consumed by the devcontainer runtime.
 # Requires the build context to be node/ (not node/src) so examples/ is in scope.
 COPY examples/devcontainer.json examples/compose.yaml /usr/local/share/devcontainer/
+# Pin the baked compose's app image tag to THIS variant, so a repo running e.g.
+# :node22 has CI copy in a :node22 reference (not the example's default). This is
+# why the per-repo Node major needs no .env -- the copy matches the running image.
+RUN [ -n "${VARIANT_TAG}" ] || { echo "ERROR: build-arg VARIANT_TAG is required (the variant name, e.g. node22)" >&2; exit 1; } \
+    && sed -i -E "s|(ghcr\.io/carmendata/devcontainer:)[A-Za-z0-9._-]+|\1${VARIANT_TAG}|" \
+        /usr/local/share/devcontainer/compose.yaml
 
 # Keep the container alive when run directly; compose overrides this per service.
 CMD ["sleep", "infinity"]

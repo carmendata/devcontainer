@@ -17,7 +17,7 @@ The devcontainer is a Compose stack of three containers — your dev environment
 
 Copy these rather than using VS Code's *Dev Containers: Add Dev Container Configuration Files* command — that scaffolds VS Code's own generic templates, not this image.
 
-**3. Choose the Node version** — in `.devcontainer/compose.yaml`, set the `app` service's image tag to the Node major you want, `node22` or `node24` (see [Tagging](#tagging)).
+**3. Choose the Node version** — in `.devcontainer/compose.yaml`, set the `app` service's image tag to the Node major you want, `node22` or `node24` (see [Tagging](#tagging)). Each published image bakes a reference copy of `compose.yaml` carrying its own tag, so the CI re-copy preserves the major your repo runs instead of resetting it.
 
 **4. Reopen in the container** — open the repo folder in VS Code. It detects `.devcontainer/` and offers a **Reopen in Container** notification; click it, or run **Dev Containers: Reopen in Container** from the Command Palette (`F1`). VS Code pulls the `app`, `mysql`, and `redis` images, starts the stack, and attaches a shell in the `app` container. The first open takes a minute or two while images download; later opens are near-instant.
 
@@ -38,9 +38,9 @@ After changing the `.devcontainer/` config — or to pick up a newer published i
 }
 ```
 
-`compose.yaml` pulls the published `app` image and defines the `mysql` and `redis` services. The `app` image carries its own VS Code extension list, settings, mount config, and post-attach hook via an embedded `devcontainer.metadata` label — the Dev Containers extension reads that label and merges it with `devcontainer.json`, so anything genuinely repo-specific composes with the image defaults rather than replacing them. Repo-specific infrastructure (an extra service, a different mount) goes in your copy of `compose.yaml`.
+`compose.yaml` pulls the published `app` image and defines the `mysql` and `redis` services. `devcontainer.json` is the single, full configuration — VS Code extensions, settings, env, forwarded ports, and the post-attach hook — read directly by the Dev Containers extension. (Earlier revisions split this into an embedded `devcontainer.metadata` image label merged at create time, but that merge proved unreliable under Docker Compose + clone-in-volume + Podman, so the whole config now lives in the file.) The standard version of **both** files is baked into the `app` image at `/usr/local/share/devcontainer/` and kept in lock-step in each repo by the CI tooling. Repo-specific infrastructure (an extra service, a different mount) goes in your copy of these files.
 
-> **Security note — SSH keys.** The image's metadata bind-mounts your host `~/.ssh` into the container (at `/root/.ssh-host`, and the container runs as `root`). This is convenient for git-over-SSH, but it means any code or VS Code extension running inside the devcontainer can read your private keys. If that exposure matters for your threat model, prefer **SSH agent forwarding** (don't mount the key material), or make the mount read-only — edit the `mounts` entry in `node/src/devcontainer-metadata.json`. The production image is unaffected (no such mount, runs non-root).
+> **Security note.** The container runs as `root` but does **not** bind-mount any host files. Your Git identity is copied in automatically by the Dev Containers extension (`dev.containers.copyGitConfig`, on by default), and Git over SSH should use **SSH agent forwarding** ([docs/SSH-AGENT.md](docs/SSH-AGENT.md)) so private keys never enter the container. Host bind-mounts of files outside the workspace are deliberately avoided — they don't work reliably under Podman on Windows (the Windows drive isn't shared into the Podman machine). The production image runs non-root.
 
 ## What's in it
 
@@ -146,12 +146,12 @@ To change something everyone gets — a new extension, an extra system package, 
 - `dev/src/start-dockerd` — the opt-in Docker-in-Docker daemon launcher for CI
 - `node/variants.json` — the Node/pnpm build variants and the tags each publishes
 - `node/src/Dockerfile` — multi-stage: the `prod` target (production runtime base) and the `dev` target (devcontainer image), sharing one Node install
-- `node/src/devcontainer-metadata.json` — extensions, settings, mounts, lifecycle hooks
+- `node/examples/devcontainer.json` — the full standard devcontainer config (extensions, settings, env, ports, lifecycle); baked into the image and copied downstream
 - `node/examples/compose.yaml` — the service definitions downstream repos copy
 
 To add a build variant — a new Node major, or a second pnpm version for an existing one — add an object to `node/variants.json` with a unique `name`, the full `node` version (e.g. `24.16.0`), a `pnpm` version, and the rolling `tags` to publish. For example, a second pnpm line for Node 24: `{ "name": "node24-pnpm9", "node": "24.16.0", "pnpm": "9.15.0", "tags": ["node24-pnpm9"] }`. CI picks it up on the next push — no workflow change needed.
 
-Two caveats on how changes propagate. Changes to `devcontainer-metadata.json` don't rebuild the image layers — the JSON is excluded from the Docker build context via `node/.dockerignore` and applied as a label at build time; pushing a metadata-only change still produces a new image but is cheap. And changes to `node/examples/compose.yaml` (e.g. a new MySQL version) reach a downstream repo only when it re-copies the file — unlike the `app` image, which is pulled automatically on the next container rebuild.
+One caveat on how changes propagate. Edits to `node/examples/devcontainer.json` or `node/examples/compose.yaml` are baked into the image's reference copy (`/usr/local/share/devcontainer/`) on the next build, but reach a downstream repo's `.devcontainer/` only when those files are re-copied — by the CI sync tooling, or by hand. This is unlike the `app` image itself, which is pulled automatically on the next container rebuild.
 
 ## Image visibility
 
@@ -163,11 +163,14 @@ Everything for the Node stack lives under [`node/`](node/) — work from there:
 
 ```bash
 cd node
-docker compose build              # build the app image (default variant)
+# NODE_VERSION/PNPM_VERSION/VARIANT_TAG have no defaults -- they live only in
+# variants.json (DRY). Export one variant's values, or use ./build-all.sh.
+export NODE_VERSION=24.16.0 PNPM_VERSION=10.33.0 VARIANT_TAG=node24
+docker compose build              # build the app image for that variant
 docker compose up -d --wait       # start app + mysql + redis
 ```
 
-By default `docker compose build` layers the app on the **published** `base` and `dev` images (`ghcr.io/<owner>/devcontainer:{base,dev}`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) — it builds `devcontainer:base` → `devcontainer:dev` → then both targets of every variant (`production:<name>` and `devcontainer:<name>`) — or build the tiers and pass `BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev docker compose build`.
+By default `docker compose build` layers the app on the **published** `base` and `dev` images (`ghcr.io/<owner>/devcontainer:{base,dev}`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) — it builds `devcontainer:base` → `devcontainer:dev` → then both targets of every variant (`production:<name>` and `devcontainer:<name>`) — or build the tiers and pass `BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev` alongside the variant vars above to `docker compose build`.
 
 `--wait` blocks until every healthcheck passes. Poke at the stack:
 
@@ -182,7 +185,7 @@ mysql -h mysql -u root -e "SELECT VERSION();"
 
 Tear down with `docker compose down -v` (the `-v` also drops the MySQL volume).
 
-`docker compose build` uses the default variant; build another with `NODE_VERSION=22.22.3 docker compose build`. To build every variant at once, run [`node/build-all.sh`](node/build-all.sh); to smoke-test the full stack for every variant, run [`node/test/smoke.sh`](node/test/smoke.sh) (or pass one variant name, e.g. `./test/smoke.sh node24`). `podman compose` works in place of `docker compose`; `build-all.sh` and `test/smoke.sh` auto-detect a working docker or podman engine (force one with `DOCKER=podman`).
+`docker compose build` needs `NODE_VERSION`, `PNPM_VERSION`, and `VARIANT_TAG` passed explicitly — there are no defaults, so the versions live only in [`node/variants.json`](node/variants.json). To build every variant at once (reading `variants.json` for you), run [`node/build-all.sh`](node/build-all.sh); to smoke-test the full stack for every variant, run [`node/test/smoke.sh`](node/test/smoke.sh) (or pass one variant name, e.g. `./test/smoke.sh node24`). `podman compose` works in place of `docker compose`; `build-all.sh` and `test/smoke.sh` auto-detect a working docker or podman engine (force one with `DOCKER=podman`).
 
 ## Why a custom image rather than features
 
@@ -210,11 +213,10 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 │   ├── compose.yaml                 local build + test stack
 │   ├── .dockerignore                build context is node/; keeps it lean & cache-stable
 │   ├── src/
-│   │   ├── Dockerfile               multi-stage: prod (runtime base) + dev (devcontainer)
-│   │   └── devcontainer-metadata.json   baked into the dev image as a label
-│   ├── examples/                    copied downstream, AND baked into the dev image as the CI drift-check reference
-│   │   ├── devcontainer.json        downstream .devcontainer/ template
-│   │   └── compose.yaml             downstream service definitions
+│   │   └── Dockerfile               multi-stage: prod (runtime base) + dev (devcontainer)
+│   ├── examples/                    the standard config: baked into the dev image AND copied into each downstream repo
+│   │   ├── devcontainer.json        full devcontainer config (extensions, settings, env, ports, lifecycle)
+│   │   └── compose.yaml             service definitions (app + mysql + redis); image tag baked per-variant
 │   └── test/
 │       └── smoke.sh                 stack smoke test
 └── README.md
