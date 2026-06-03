@@ -1,88 +1,97 @@
-# Developer setup guide
+# Getting started
 
-Everything you need to do **once on your machine** before opening a project in
-the devcontainer. Work through the prerequisites below in order; each links to a
-detail page where the steps need more than a line.
+A one-time, per-machine setup to develop inside the devcontainer. Each step is a
+quick summary with a link to its detail page — work through them top to bottom.
 
 For what the devcontainer *is* and how the images are built, see the
 [project README](../README.md). This guide is just the per-developer setup.
 
 ---
 
-## Prerequisites
+## What you'll set up
 
-### 1. VS Code + Dev Containers extension
+The container bind-mounts no host files, so it gets what it needs from you three
+different ways:
 
-- Install [VS Code](https://code.visualstudio.com/).
-- Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-  (`ms-vscode-remote.remote-containers`).
-
-### 2. A container engine — Podman Desktop (recommended)
-
-We use **[Podman Desktop](https://podman-desktop.io/)**: it's free for any use
-(no per-seat licensing), daemonless, and runs the same OCI images. A few extra
-settings make it a drop-in replacement for Docker and let the Dev Containers
-extension drive it.
-
-→ [Install and configure Podman](PODMAN.md)
-
-Confirm it's working: `podman version` should print both a Client and a
-Server/engine section without errors.
-
-> **Already on Docker Desktop?** It still works with the extension, but it isn't
-> our recommendation — Docker Desktop's licensing terms for larger organisations
-> are why we default to Podman. If you're switching, **remove Docker Desktop
-> first** ([uninstall guide](UNINSTALL-DOCKER.md)) to avoid `docker`/WSL
-> conflicts, then follow the [Podman page](PODMAN.md).
-
-### 3. An SSH key
-
-You need an SSH key pair to push and pull from GitHub inside the container.
-
-- **Don't have one yet?** → [Create an SSH key](SSH-KEY.md)
-- **Already have one** (`ssh-add -l` or a file at `~/.ssh/id_ed25519`)? Skip to
-  the next step.
-
-### 4. Add the key to your GitHub account
-
-A key only works once GitHub knows its public half.
-
-→ [Add your SSH key to GitHub](GITHUB-SSH-KEY.md)
-
-### 5. Make the key available to the container — use the ssh-agent
-
-The **recommended, secure** way to give the container access to your key is
-ssh-agent forwarding: your private key stays on the host and is never copied
-into the container.
-
-→ [Set up ssh-agent forwarding](SSH-AGENT.md)
-
-> **Why the agent, not a mount?** The image *can* bind-mount your host `~/.ssh`
-> into the container, but that puts your private key bytes where any process or
-> extension in the container can read them. Agent forwarding avoids that — see
-> the [security note in the README](../README.md#what-the-two-files-do) and the
-> rationale at the bottom of the [ssh-agent page](SSH-AGENT.md).
+1. **SSH key + agent forwarding** — your key stays on the host; VS Code forwards
+   the *agent* in (steps 3–5).
+2. **Git identity forwarding** — VS Code copies your host Git config in
+   automatically; you just set it on the host (step 6).
+3. **`GITHUB_AUTH_TOKEN`** — the one credential you set *manually*: a host env var
+   forwarded in for private npm packages and `gh` (step 7).
 
 ---
 
-## Then: open a project in the container
+## Setup steps
 
-Once the above is done, in any repo that has a `.devcontainer/` directory:
+### 1. Install VS Code + the Dev Containers extension
 
-1. Open the repo folder in VS Code.
-2. Click **Reopen in Container** when prompted (or run **Dev Containers: Reopen
-   in Container** from the Command Palette, `F1`).
-3. The first open pulls images and takes a minute or two; later opens are
-   near-instant.
+[VS Code](https://code.visualstudio.com/) plus the
+[Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+(`ms-vscode-remote.remote-containers`).
 
-Verify SSH works from a terminal **inside the container**:
+### 2. Install Podman and point VS Code at it
+
+We use Podman Desktop (free, no per-seat licensing). Install it, add the WSL2
+backend on Windows, and set `dev.containers.dockerPath` to `podman`.
+
+→ [PODMAN.md](PODMAN.md) · switching from Docker Desktop? [UNINSTALL-DOCKER.md](UNINSTALL-DOCKER.md) first
+
+### 3. Create an SSH key
+
+You need an Ed25519 key pair to reach GitHub from inside the container. Already
+have one (`ssh-add -l`, or `~/.ssh/id_ed25519` exists)? Skip ahead.
+
+→ [SSH-KEY.md](SSH-KEY.md)
+
+### 4. Add the key to GitHub
+
+The key only works once GitHub has its public half.
+
+→ [GITHUB-SSH-KEY.md](GITHUB-SSH-KEY.md)
+
+### 5. Set up ssh-agent forwarding
+
+Run the ssh-agent with your key loaded; VS Code forwards the agent into the
+container so your private key never enters it.
+
+→ [SSH-AGENT.md](SSH-AGENT.md)
+
+### 6. Install Git and set your identity
+
+Install Git on the host and set `user.name` / `user.email` — VS Code forwards
+your Git config into the container automatically.
+
+→ [GIT-IDENTITY.md](GIT-IDENTITY.md)
+
+### 7. Set `GITHUB_AUTH_TOKEN`
+
+Create a classic PAT (scopes `repo`, `write:packages`) and export it on the host
+as `GITHUB_AUTH_TOKEN`, for private `@carmendata` packages and `gh`.
+
+→ [GITHUB-TOKEN.md](GITHUB-TOKEN.md)
+
+---
+
+## Open a project
+
+Once setup is done, for any repo with a `.devcontainer/` directory:
+
+- **Fresh start (recommended)** — let VS Code clone the repo into an isolated,
+  faster volume-backed workspace; you never clone to your host.
+  → [CLONE-IN-VOLUME.md](CLONE-IN-VOLUME.md)
+- **Existing checkout** — open the folder and run **Dev Containers: Reopen in
+  Container** (`F1`) to bind-mount your host checkout at `/workspace`.
+
+First open pulls images (a minute or two); later opens are near-instant. Sanity
+check from a terminal **inside the container**:
 
 ```bash
-ssh-add -l            # should list your key (forwarded from the host)
-ssh -T git@github.com # should greet you by username
+ssh-add -l            # lists your key (forwarded from the host)
+ssh -T git@github.com # greets you by username
 ```
 
-Setting up a repo's `.devcontainer/` config in the first place is covered in the
+Adding `.devcontainer/` config to a repo in the first place is covered in the
 [project README → Using the image](../README.md#using-the-image).
 
 ---
@@ -96,3 +105,6 @@ Setting up a repo's `.devcontainer/` config in the first place is covered in the
 | [SSH-KEY.md](SSH-KEY.md) | Generating an SSH key pair on Windows / macOS / Linux |
 | [GITHUB-SSH-KEY.md](GITHUB-SSH-KEY.md) | Adding the public key to your GitHub account |
 | [SSH-AGENT.md](SSH-AGENT.md) | Running the ssh-agent and forwarding it into the container |
+| [GIT-IDENTITY.md](GIT-IDENTITY.md) | Installing Git and setting your commit identity |
+| [GITHUB-TOKEN.md](GITHUB-TOKEN.md) | Creating a classic PAT and setting `GITHUB_AUTH_TOKEN` |
+| [CLONE-IN-VOLUME.md](CLONE-IN-VOLUME.md) | Working on a repo via "Clone Repository in Container Volume" |

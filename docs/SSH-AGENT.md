@@ -6,8 +6,8 @@ stays on your host machine, and VS Code forwards the *agent* — not the key fil
 — into the container. The container can authenticate but can never read or copy
 your private key.
 
-This replaces bind-mounting `~/.ssh` into the container for authentication. Set
-it up once and it survives reboots.
+The container bind-mounts no host files, so this agent forwarding — not a mounted
+`~/.ssh` — is how your key reaches it. Set it up once and it survives reboots.
 
 ---
 

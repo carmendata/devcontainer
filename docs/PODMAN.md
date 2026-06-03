@@ -52,13 +52,29 @@ On Windows, Podman Desktop can back its machine with either **WSL2** or
 (Hyper-V does), and is the backend the Dev Containers extension and our rootful
 Docker-in-Docker setup are tested against.
 
-1. **Enable WSL2 first** (admin PowerShell), then reboot:
+1. **Install or update WSL first** (admin PowerShell), then reboot. An
+   **out-of-date WSL is a known cause of Podman-machine failures on Windows**, so
+   update it even if WSL is already installed — don't skip this:
 
    ```powershell
-   wsl --install
+   wsl --install                    # installs WSL if it isn't present
+   winget install Microsoft.WSL     # updates WSL to the current release
    wsl --set-default-version 2
-   wsl --version          # confirm WSL 2 is present
+   wsl --version                    # confirm WSL 2 and a recent version
    ```
+
+   > **No `winget`?** The Windows Package Manager (`winget`) ships as the **App
+   > Installer** on Windows 11 and recent Windows 10. If `winget` isn't
+   > recognised, install App Installer from <https://aka.ms/getwinget> (opens the
+   > Microsoft Store) — reference: the
+   > [winget install docs](https://learn.microsoft.com/windows/package-manager/winget/)
+   > — then re-run the command. (`wsl --update` is a fallback if you can't get
+   > winget.)
+   >
+   > **Symptom of an out-of-date WSL:** the Podman machine never reaches the
+   > running state and `podman machine start` (or Podman Desktop) reports
+   > `CreateFile \\.\pipe\docker_engine: All pipe instances are busy`. Updating
+   > WSL as above clears it.
 
 2. **Tell Podman to use WSL.** In Podman Desktop's onboarding / **Settings →
    Resources**, choose the **WSL** provider when creating the machine. For the
@@ -140,9 +156,7 @@ Or add to your `settings.json` directly:
 
 ```jsonc
 {
-  "dev.containers.dockerPath": "podman",
-  "dev.containers.dockerComposePath": "podman compose",
-  "dev.containers.bootstrapImage": "ghcr.io/carmendata/devcontainer:node24",
+  "dev.containers.dockerPath": "podman"
 }
 ```
 
