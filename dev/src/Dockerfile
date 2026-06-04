@@ -85,5 +85,14 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=0755 start-dockerd /usr/local/bin/start-dockerd
 
+# --- clone-in-volume mountpoint ---------------------------------------------
+# VS Code's "Clone Repository in Container Volume" mounts a named volume at
+# /workspaces and clones into /workspaces/<repo>. Pre-create the mountpoint so
+# the runtime never has to mkdir it: under rootless Podman in the macOS VM that
+# runtime mkdir fails with "mkdir /workspaces: operation not permitted" (EPERM).
+# With the dir already present the volume just mounts over it. Harmless to the
+# "Reopen in Container" flow, which uses /workspace (singular) via the bind mount.
+RUN mkdir -p /workspaces
+
 # Keep the container alive when run directly; compose overrides this per service.
 CMD ["sleep", "infinity"]
