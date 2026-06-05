@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#
+# Start the standalone ColdFusion 2021 server inside the devcontainer and follow
+# its logs. The CF start script daemonises; this wraps it so `cfstart` blocks on
+# the log tail (Ctrl-C stops tailing, not the server -- use `cfstop` to stop CF).
+#
+#   cfstart        start CF and tail its logs
+#
+# CF Administrator: http://localhost:${CF_PORT}/CFIDE/administrator/
+set -euo pipefail
+
+CF_HOME="${CF_HOME:-/opt/coldfusion2021}"
+CF_PORT="${CF_PORT:-8500}"
+cf_bin="$CF_HOME/cfusion/bin/coldfusion"
+
+[ -x "$cf_bin" ] || { echo "ERROR: $cf_bin not found -- is the CF tree baked in? (see coldfusion/README.md)" >&2; exit 1; }
+
+"$cf_bin" start
+echo "==> ColdFusion 2021 starting on http://localhost:${CF_PORT}/  (admin: /CFIDE/administrator/)"
+
+# Tail whatever start/out logs exist; -F tolerates files that appear later.
+logs=()
+for f in coldfusion-out.log coldfusion-error.log application.log server.log; do
+    logs+=("$CF_HOME/cfusion/logs/$f")
+done
+exec tail -n +1 -F "${logs[@]}" 2>/dev/null

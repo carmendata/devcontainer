@@ -1,0 +1,29 @@
+{
+  "name": "ColdFusion 2021 Development",
+  "dockerComposeFile": "compose.yaml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "root",
+  "overrideCommand": false,
+  // CF built-in server (and CF Administrator at /CFIDE/administrator/) on 8500;
+  // the MySQL service on 3306.
+  "forwardPorts": [8500, "mysql:3306"],
+  // Serve this repo under CF's webroot at http://localhost:8500/app/ without
+  // clobbering the baked CFIDE (which lives in wwwroot). A legacy app that must
+  // live at the web root can instead point Tomcat's docBase at /workspace --
+  // see coldfusion/README.md. The server is started on demand with `cfstart`.
+  "postStartCommand": "ln -sfn /workspace /opt/coldfusion2021/cfusion/wwwroot/app",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "KamasamaK.vscode-cfml"
+      ],
+      "settings": {
+        "files.associations": {
+          "*.cfm": "cfml",
+          "*.cfc": "cfml"
+        }
+      }
+    }
+  }
+}

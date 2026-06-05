@@ -2,3 +2,7 @@
 .DS_Store
 .idea/
 .vscode/
+
+# coldfusion POC: never commit the presigned backup URL or a local CF install tree
+coldfusion/cf_backup_url.txt
+coldfusion/**/cf-install/

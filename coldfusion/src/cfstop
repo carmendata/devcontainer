@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#
+# Stop the standalone ColdFusion 2021 server inside the devcontainer.
+set -euo pipefail
+
+CF_HOME="${CF_HOME:-/opt/coldfusion2021}"
+cf_bin="$CF_HOME/cfusion/bin/coldfusion"
+
+[ -x "$cf_bin" ] || { echo "ERROR: $cf_bin not found." >&2; exit 1; }
+exec "$cf_bin" stop

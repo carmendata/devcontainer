@@ -1,0 +1,64 @@
+# Local build + test composition for the ColdFusion 2021 stack: builds the app
+# image from src/ (fetching the prod CF tree via the cf_backup_url secret) and
+# stands it up next to a MySQL service container.
+#
+# Downstream legacy repos do NOT use this file -- they copy the template under
+# examples/, which references the locally built image instead of rebuilding it.
+#
+# Prerequisite: write a presigned S3 URL (URL only) to coldfusion/cf_backup_url.txt
+# so the build secret below can resolve it. See coldfusion/README.md.
+#
+#   cd coldfusion
+#   printf '%s' "<presigned-s3-url>" > cf_backup_url.txt
+#   docker compose build          # builds + tags devcontainer:coldfusion2021
+#   docker compose up -d           # start app + mysql
+name: devcontainer-coldfusion
+
+services:
+  app:
+    # Tag the built image so the downstream examples/ stack can reference it
+    # (POC: built locally; a published ghcr.io tag replaces this once CI lands).
+    image: devcontainer:coldfusion2021
+    build:
+      # Context is coldfusion/ (not coldfusion/src) so the Dockerfile can COPY
+      # examples/ in as the baked reference config. BASE_IMAGE/DEV_IMAGE default
+      # to the published tiers; to build against locally built tiers, run
+      # ../build-all.sh-style builds and pass BASE_IMAGE/DEV_IMAGE.
+      context: .
+      dockerfile: src/Dockerfile
+      target: dev
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/carmendata/devcontainer:base}
+        DEV_IMAGE: ${DEV_IMAGE:-ghcr.io/carmendata/devcontainer:dev}
+      secrets:
+        - cf_backup_url
+    command: sleep infinity
+    ports:
+      - "8500:8500"      # CF built-in server + CF Administrator
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      # Dev sandbox only: passwordless root. Never use this in production.
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: "%"
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql-data:
+
+# The presigned backup URL, consumed only at build time (never baked into the
+# image). cf_backup_url.txt is gitignored -- it is a credential.
+secrets:
+  cf_backup_url:
+    file: ./cf_backup_url.txt

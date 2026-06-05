@@ -1,0 +1,10 @@
+# Build context is coldfusion/ (so the Dockerfile can COPY examples/ for the
+# baked reference config). Keep the context lean and cache-stable.
+
+# Local-only build/test files, not needed inside the image.
+compose.yaml
+README.md
+
+# NEVER send the credential or any local CF tree into the build context.
+cf_backup_url.txt
+**/cf-install/

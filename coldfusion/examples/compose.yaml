@@ -1,0 +1,39 @@
+# Companion compose file for the ColdFusion 2021 devcontainer. Copy this file
+# and devcontainer.json into a .devcontainer/ directory at the root of your
+# legacy CF project.
+#
+# The app service runs the ColdFusion image; mysql runs as its own container,
+# reachable from the devcontainer by service name (host "mysql", port 3306).
+services:
+  app:
+    # POC: this image is built locally from the template repo
+    # (cd coldfusion && docker compose build -- see coldfusion/README.md).
+    # Once CI publishes it, switch to the GHCR tag and add `pull_policy: always`:
+    #   image: ghcr.io/carmendata/devcontainer:coldfusion2021
+    image: devcontainer:coldfusion2021
+    command: sleep infinity
+    ports:
+      - "8500:8500"      # CF built-in server + CF Administrator
+    volumes:
+      - ..:/workspace:cached
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      # Dev sandbox only: passwordless root. Never use this in production.
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: "%"
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+volumes:
+  mysql-data:
