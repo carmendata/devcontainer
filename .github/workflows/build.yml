@@ -95,6 +95,8 @@ jobs:
           cache-from: type=gha,scope=base
           cache-to: type=gha,scope=base,mode=max
 
+      # BuildKit provenance is disabled in the build step above (provenance: false);
+      # we upload keyless SLSA provenance separately to GHCR via verify-image.
       - name: Scan + attest base
         uses: ./.github/actions/verify-image
         with:
