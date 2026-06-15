@@ -53,4 +53,7 @@ runs:
       with:
         subject-name: ${{ inputs.image }}
         subject-digest: ${{ inputs.digest }}
-        push-to-registry: true
+        # Keep the attestation in GitHub's store only (verify with
+        # `gh attestation verify oci://… --owner carmendata`). Pushing it to the
+        # registry creates noisy `sha256-<digest>` referrer fallback tags on GHCR.
+        push-to-registry: false
