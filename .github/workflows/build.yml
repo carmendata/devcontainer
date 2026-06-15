@@ -304,8 +304,10 @@ jobs:
           jq -e '
             (.services | length > 0)
             and ((.services | map(.name) | length) == (.services | map(.name) | unique | length))
+            and (.services | all((.from | type == "string") and (.tags | type == "array") and (.tags | length > 0)))
+            and (.services | all((.tags | length) == (.tags | unique | length)))
           ' services/variants.json > /dev/null \
-            || { echo "::error::services/variants.json is empty or has duplicate names"; exit 1; }
+            || { echo "::error::services/variants.json must contain unique service names and each service must define a non-empty tags[] array and from"; exit 1; }
           echo "services=$(jq -c '.services' services/variants.json)" >> "$GITHUB_OUTPUT"
 
   # Mirror pinned upstream service images (mysql, redis, ...) to GHCR so the
