@@ -223,3 +223,4 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 ```
 
 Further stacks would sit alongside `node/` — a `go/` or `python/` directory with its own `variants.json` — each layered on the shared `base/` + `dev/` tiers and added as a job in `.github/workflows/build.yml`.
+

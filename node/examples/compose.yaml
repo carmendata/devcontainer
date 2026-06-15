@@ -18,7 +18,6 @@ services:
     privileged: true        # required for in-container docker builds for CI
     command: sleep infinity
     volumes:
-      - ..:/workspace:cached
       - docker-data:/var/lib/docker   # non-overlay backing → in-container docker builds for CI
     depends_on:
       mysql:

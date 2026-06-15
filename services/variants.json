@@ -1,0 +1,27 @@
+{
+  "services": [
+    {
+      "name": "mysql",
+      "sources": [
+        "container-registry.oracle.com/mysql/community-server:8.0",
+        "container-registry.oracle.com/mysql/community-server:8.0-aarch64"
+      ],
+      "tags": ["8.0"]
+    },
+    {
+      "name": "redis",
+      "sources": ["docker.io/library/redis:7.4"],
+      "tags": ["7.4"]
+    },
+    {
+      "name": "valkey",
+      "sources": ["docker.io/valkey/valkey:8"],
+      "tags": ["8"]
+    },
+    {
+      "name": "postgres",
+      "sources": ["docker.io/library/postgres:17"],
+      "tags": ["17"]
+    }
+  ]
+}
