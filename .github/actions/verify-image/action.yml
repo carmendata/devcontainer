@@ -23,7 +23,7 @@ runs:
   using: composite
   steps:
     - name: Cache Trivy DB
-      uses: actions/cache@27d5ce7df421c4ede993caaa448e7e95841b82fc # v4
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ~/.cache/trivy
         key: ${{ runner.os }}-trivy-db-v1

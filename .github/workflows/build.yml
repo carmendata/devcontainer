@@ -306,10 +306,10 @@ jobs:
           jq -e '
             (.services | length > 0)
             and ((.services | map(.name) | length) == (.services | map(.name) | unique | length))
-            and (.services | all((.from | type == "string") and (.tags | type == "array") and (.tags | length > 0)))
+            and (.services | all(((.name | type == "string") and (.name | length > 0)) and ((.sources | type == "array") and (.sources | length > 0)) and ((.tags | type == "array") and (.tags | length > 0))))
             and (.services | all((.tags | length) == (.tags | unique | length)))
           ' services/variants.json > /dev/null \
-            || { echo "::error::services/variants.json must contain unique service names and each service must define a non-empty tags[] array and from"; exit 1; }
+            || { echo "::error::each service needs a name, a non-empty sources[] array, and a non-empty unique tags[] array"; exit 1; }
           echo "services=$(jq -c '.services' services/variants.json)" >> "$GITHUB_OUTPUT"
 
   # Mirror pinned upstream service images (mysql, redis, ...) to GHCR so the
@@ -334,9 +334,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
-
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
@@ -347,36 +344,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Assemble tags
-        id: tags
-        run: |
-          repo="ghcr.io/${{ github.repository_owner }}/${{ matrix.service.name }}"
-          {
-            echo "list<<EOF"
-            for t in $(echo '${{ toJSON(matrix.service.tags) }}' | jq -r '.[]'); do echo "$repo:${t}"; done
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
-          echo "repo=$repo" >> "$GITHUB_OUTPUT"
-
-      - name: Mirror and push
+      # Assemble a multi-arch manifest in GHCR straight from the vendor's
+      # published images -- a pure copy (no rebuild), so we ship the exact
+      # upstream bytes. Handles both source shapes: multiple per-arch tags
+      # (e.g. Oracle MySQL :8.0 + :8.0-aarch64) and a single already-multi-arch
+      # source (redis/valkey/postgres) both collapse into one imagetools create.
+      - name: Assemble + push multi-arch image
         id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
-        with:
-          context: services/src
-          file: services/src/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          build-args: |
-            FROM_IMAGE=${{ matrix.service.from }}
-          tags: ${{ steps.tags.outputs.list }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ matrix.service.name }}
+          SOURCES: ${{ join(matrix.service.sources, ' ') }}
+          TAGS_JSON: ${{ toJSON(matrix.service.tags) }}
+        run: |
+          tag_args=$(echo "$TAGS_JSON" | jq -r --arg r "$REPO" '.[] | "-t \($r):\(.)"')
+          docker buildx imagetools create $tag_args \
+            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}" \
+            $SOURCES
+          first=$(echo "$TAGS_JSON" | jq -r '.[0]')
+          digest=$(docker buildx imagetools inspect "$REPO:$first" --format '{{.Manifest.Digest}}')
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Scan + attest ${{ matrix.service.name }}
         uses: ./.github/actions/verify-image
         with:
-          image: ${{ steps.tags.outputs.repo }}
+          image: ${{ steps.build.outputs.repo }}
           digest: ${{ steps.build.outputs.digest }}
           category: service-${{ matrix.service.name }}
