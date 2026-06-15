@@ -1,12 +1,13 @@
 name: build
 
-# Builds the three image tiers and pushes them all to GHCR:
-#   base  -- minimal prod-capable debian (base/src)
-#   dev   -- base + dev/CI tooling + docker engine (dev/src)
-#   node  -- dev + a Node runtime per node/variants.json (node/src)
-# Each tier is built FROM the immutable <tier>-<sha> tag produced earlier in the
-# same run, so the run is internally consistent and the base/dev layers are
-# shared across every variant in the registry.
+# Builds the image tiers and pushes them to GHCR as separate packages:
+#   carmendata/base         -- minimal prod-capable debian (base/src)      -> :latest
+#   carmendata/dev          -- base + dev/CI tooling + docker engine (dev) -> :latest
+#   carmendata/devcontainer -- dev + Node per node/variants.json (devs)    -> :node22, :node24
+#   carmendata/production   -- base + Node, lean, no dev tooling           -> :node22, :node24
+# Each tier is built FROM the previous one BY DIGEST (no per-commit tags), so a
+# run is internally consistent and base/dev layers are shared across variants.
+# base/dev are internal -- keep their packages private.
 #
 # MySQL and Redis are mirrored from upstream into GHCR by the `services` job
 # (driven by services/variants.json) so egress-sandboxed/prod hosts can pull them
@@ -33,16 +34,19 @@ permissions:
   contents: read
 
 env:
-  # Devcontainer images (incl. the base/dev tiers) publish here; the variant
-  # lives in the tag (base, dev, node22, node24, and later go, python, ...).
+  # Devcontainer images devs pull -- node variant in the tag (node22, node24, ...).
   IMAGE: ghcr.io/${{ github.repository_owner }}/devcontainer
-  # Lean production runtime bases publish to a separate package.
+  # Lean production runtime bases -- node variant in the tag.
   PROD_IMAGE: ghcr.io/${{ github.repository_owner }}/production
+  # Internal build tiers, each its own package (keep these private). Downstream
+  # jobs reference them BY DIGEST, so they carry only a rolling :latest tag.
+  BASE_IMG: ghcr.io/${{ github.repository_owner }}/base
+  DEV_IMG: ghcr.io/${{ github.repository_owner }}/dev
 
 jobs:
-  # Build + push the shared base. Variants build FROM the immutable base-<sha>
-  # tag produced here, so a run is internally consistent: variants always layer
-  # on the base built from the same commit.
+  # Build + push the shared org base (carmendata/base). The dev and node jobs
+  # reference it BY DIGEST (no per-commit tags), so a run is internally
+  # consistent: every tier layers on the base built in the same run.
   base:
     runs-on: ubuntu-latest
     permissions:
@@ -52,7 +56,7 @@ jobs:
       attestations: write    # write the build-provenance attestation to GHCR
       security-events: write # upload Trivy SARIF to the Security tab
     outputs:
-      ref: ${{ steps.ref.outputs.ref }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -71,10 +75,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive base ref
-        id: ref
-        run: echo "ref=${IMAGE}:base-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
       - name: Build and push base
         id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
@@ -86,25 +86,24 @@ jobs:
           # Clean two-arch manifest list -- no extra attestation manifests,
           # which keeps the image predictable for podman / devcontainer tooling.
           provenance: false
-          tags: |
-            ${{ env.IMAGE }}:base
-            ${{ steps.ref.outputs.ref }}
+          tags: ${{ env.BASE_IMG }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=base
           cache-to: type=gha,scope=base,mode=max
 
-      # BuildKit provenance is disabled in the build step above (provenance: false);
-      # we upload keyless SLSA provenance separately to GHCR via verify-image.
+      # BuildKit provenance is disabled in the build step (provenance: false);
+      # keyless SLSA provenance is attached separately by verify-image.
       - name: Scan + attest base
         uses: ./.github/actions/verify-image
         with:
-          image: ${{ env.IMAGE }}
+          image: ${{ env.BASE_IMG }}
           digest: ${{ steps.build.outputs.digest }}
           category: base
 
-  # Build + push the dev tooling tier FROM the base built above.
+  # Build + push the dev tooling tier (carmendata/dev) FROM the base above
+  # (by digest). The node job references this by digest in turn.
   dev:
     needs: base
     runs-on: ubuntu-latest
@@ -115,7 +114,7 @@ jobs:
       attestations: write    # write the build-provenance attestation to GHCR
       security-events: write # upload Trivy SARIF to the Security tab
     outputs:
-      ref: ${{ steps.ref.outputs.ref }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -133,10 +132,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive dev ref
-        id: ref
-        run: echo "ref=${IMAGE}:dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
       - name: Build and push dev
         id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
@@ -147,10 +142,8 @@ jobs:
           push: true
           provenance: false
           build-args: |
-            BASE_IMAGE=${{ needs.base.outputs.ref }}
-          tags: |
-            ${{ env.IMAGE }}:dev
-            ${{ steps.ref.outputs.ref }}
+            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.base.outputs.digest }}
+          tags: ${{ env.DEV_IMG }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -160,7 +153,7 @@ jobs:
       - name: Scan + attest dev
         uses: ./.github/actions/verify-image
         with:
-          image: ${{ env.IMAGE }}
+          image: ${{ env.DEV_IMG }}
           digest: ${{ steps.build.outputs.digest }}
           category: dev
 
@@ -213,19 +206,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Rolling tags come from node/variants.json; the <name>-<sha> tag is the
-      # immutable pin. The same tags are derived for both the devcontainer image
-      # (IMAGE) and the production runtime base (PROD_IMAGE).
+      # Rolling tags only (node22, node24, ...) from node/variants.json -- no
+      # per-commit pins on the published devcontainer/production images. The same
+      # tags are derived for both packages.
       - name: Assemble tags
         id: tags
         run: |
-          sha="${GITHUB_SHA::7}"
           rolling=$(echo '${{ toJSON(matrix.variant.tags) }}' | jq -r '.[]')
           emit() {  # $1 = output name, $2 = repo
             {
               echo "$1<<EOF"
               for t in $rolling; do echo "$2:${t}"; done
-              echo "$2:${{ matrix.variant.name }}-${sha}"
               echo EOF
             } >> "$GITHUB_OUTPUT"
           }
@@ -246,7 +237,7 @@ jobs:
           push: true
           provenance: false
           build-args: |
-            BASE_IMAGE=${{ needs.base.outputs.ref }}
+            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.base.outputs.digest }}
             NODE_VERSION=${{ matrix.variant.node }}
           tags: ${{ steps.tags.outputs.prod_list }}
           labels: |
@@ -274,8 +265,8 @@ jobs:
           push: true
           provenance: false
           build-args: |
-            BASE_IMAGE=${{ needs.base.outputs.ref }}
-            DEV_IMAGE=${{ needs.dev.outputs.ref }}
+            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.base.outputs.digest }}
+            DEV_IMAGE=${{ env.DEV_IMG }}@${{ needs.dev.outputs.digest }}
             NODE_VERSION=${{ matrix.variant.node }}
             PNPM_VERSION=${{ matrix.variant.pnpm }}
             VARIANT_TAG=${{ matrix.variant.name }}

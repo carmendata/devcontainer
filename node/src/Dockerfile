@@ -11,8 +11,8 @@
 #
 # Node is downloaded and integrity-checked once in the node-build stage and
 # copied into both, so the two images carry byte-identical Node.
-ARG BASE_IMAGE=ghcr.io/carmendata/devcontainer:base
-ARG DEV_IMAGE=ghcr.io/carmendata/devcontainer:dev
+ARG BASE_IMAGE=ghcr.io/carmendata/base:latest
+ARG DEV_IMAGE=ghcr.io/carmendata/dev:latest
 
 # --- node-build: fetch + verify Node once -----------------------------------
 # FROM base plus the temporary fetch tools (curl/gnupg/xz, discarded with this

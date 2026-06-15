@@ -8,7 +8,7 @@
 # Built and pushed once, so these layers are stored once and shared by every
 # language variant above. BASE_IMAGE is the prod base this extends; CI pins it
 # to the immutable base-<sha> built in the same run.
-ARG BASE_IMAGE=ghcr.io/carmendata/devcontainer:base
+ARG BASE_IMAGE=ghcr.io/carmendata/base:latest
 FROM ${BASE_IMAGE}
 
 # --- system packages --------------------------------------------------------
