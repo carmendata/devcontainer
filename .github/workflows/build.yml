@@ -8,8 +8,11 @@ name: build
 # same run, so the run is internally consistent and the base/dev layers are
 # shared across every variant in the registry.
 #
-# MySQL and Redis are not built here -- they are pulled from official images at
-# devcontainer run time (see node/examples/compose.yaml).
+# MySQL and Redis are mirrored from upstream into GHCR by the `services` job
+# (driven by services/variants.json) so egress-sandboxed/prod hosts can pull them
+# from ghcr.io instead of docker.io. Every published image is scanned (Trivy ->
+# Security tab) and gets a keyless SLSA build-provenance attestation; the shared
+# logic lives in .github/actions/verify-image.
 
 on:
   # No push trigger: `git push` only saves work. Builds are triggered on demand
@@ -45,6 +48,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
     outputs:
       ref: ${{ steps.ref.outputs.ref }}
     steps:
@@ -70,6 +76,7 @@ jobs:
         run: echo "ref=${IMAGE}:base-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push base
+        id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: base/src
@@ -88,6 +95,13 @@ jobs:
           cache-from: type=gha,scope=base
           cache-to: type=gha,scope=base,mode=max
 
+      - name: Scan + attest base
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.build.outputs.digest }}
+          category: base
+
   # Build + push the dev tooling tier FROM the base built above.
   dev:
     needs: base
@@ -95,6 +109,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
     outputs:
       ref: ${{ steps.ref.outputs.ref }}
     steps:
@@ -119,6 +136,7 @@ jobs:
         run: echo "ref=${IMAGE}:dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push dev
+        id: build
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: dev/src
@@ -136,6 +154,13 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=dev
           cache-to: type=gha,scope=dev,mode=max
+
+      - name: Scan + attest dev
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.build.outputs.digest }}
+          category: dev
 
   # Turn node/variants.json into a build matrix.
   load-matrix:
@@ -161,6 +186,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
     strategy:
       fail-fast: false
       matrix:
@@ -206,6 +234,7 @@ jobs:
       # tooling. Built first so the shared node-build stage is cached for the
       # devcontainer build below.
       - name: Build and push production
+        id: build-prod
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: node
@@ -224,8 +253,16 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.variant.name }}
           cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
 
+      - name: Scan + attest production
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.PROD_IMAGE }}
+          digest: ${{ steps.build-prod.outputs.digest }}
+          category: node-prod-${{ matrix.variant.name }}
+
       # Devcontainer image (target dev): dev tooling tier + the same Node + pnpm.
       - name: Build and push devcontainer
+        id: build-dev
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: node
@@ -246,3 +283,96 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.variant.name }}
           cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
+
+      - name: Scan + attest devcontainer
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.build-dev.outputs.digest }}
+          category: node-dev-${{ matrix.variant.name }}
+
+  # Validate services/variants.json into a matrix.
+  load-services:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.load.outputs.services }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Load and validate services/variants.json
+        id: load
+        run: |
+          jq -e '
+            (.services | length > 0)
+            and ((.services | map(.name) | length) == (.services | map(.name) | unique | length))
+          ' services/variants.json > /dev/null \
+            || { echo "::error::services/variants.json is empty or has duplicate names"; exit 1; }
+          echo "services=$(jq -c '.services' services/variants.json)" >> "$GITHUB_OUTPUT"
+
+  # Mirror pinned upstream service images (mysql, redis, ...) to GHCR so the
+  # egress-sandboxed matterhorn hosts and production can pull them from ghcr.io's
+  # stable Fastly IPs instead of docker.io's churning multi-CDN backend. These
+  # are independent of the base/dev/node tiers.
+  services:
+    needs: load-services
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.load-services.outputs.services) }}
+    name: ${{ matrix.service.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble tags
+        id: tags
+        run: |
+          repo="ghcr.io/${{ github.repository_owner }}/${{ matrix.service.name }}"
+          {
+            echo "list<<EOF"
+            for t in $(echo '${{ toJSON(matrix.service.tags) }}' | jq -r '.[]'); do echo "$repo:${t}"; done
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+
+      - name: Mirror and push
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: services/src
+          file: services/src/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            FROM_IMAGE=${{ matrix.service.from }}
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Scan + attest ${{ matrix.service.name }}
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ steps.tags.outputs.repo }}
+          digest: ${{ steps.build.outputs.digest }}
+          category: service-${{ matrix.service.name }}

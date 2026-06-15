@@ -1,0 +1,6 @@
+{
+  "services": [
+    { "name": "mysql", "from": "mysql:8.0-bookworm", "tags": ["8.0", "8.0-bookworm"] },
+    { "name": "redis", "from": "redis:7.0-bookworm", "tags": ["7.0", "7.0-bookworm"] }
+  ]
+}
