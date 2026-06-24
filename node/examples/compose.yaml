@@ -26,7 +26,10 @@ services:
         condition: service_healthy
 
   mysql:
-    image: mysql:8.0
+    # GHCR mirror of the official Oracle MySQL image, version-pinned + frozen at
+    # the source so `:8.0` only moves on a deliberate bump. Default pull policy
+    # keeps a cached image -- you keep running the version you validated against.
+    image: ghcr.io/carmendata/mysql:8.0
     environment:
       # Dev sandbox only: passwordless root. Never use this in production.
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
@@ -41,7 +44,8 @@ services:
       retries: 60 # some of the initdb scripts can take a while to run, so we need to be patient
 
   redis:
-    image: redis:7.4
+    # GHCR mirror, version-pinned + frozen the same way as mysql above.
+    image: ghcr.io/carmendata/redis:7.4
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

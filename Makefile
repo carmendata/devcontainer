@@ -37,6 +37,20 @@ watch: ## Watch the latest run of the build workflow on this branch
 		[ -n "$$id" ] || { echo "no run found for $(WORKFLOW) on $(REF)"; exit 1; }; \
 		gh run watch "$$id" --exit-status
 
+.PHONY: services
+services: ## Show the currently pinned service image versions (services/variants.json)
+	@jq -r '.services[] | "  \(.name): sources=\(.sources | join(", ")) tags=\(.tags | join(", "))"' services/variants.json
+
+.PHONY: bump-services
+bump-services: ## How to bump a frozen service image (mysql/redis/...) to a new version
+	@echo "Service images are version-pinned + frozen -- bumps are deliberate:"
+	@echo "  1. make services            # see the current pins"
+	@echo "  2. edit services/variants.json: set the new exact patch in sources[]"
+	@echo "     and the matching exact tag in tags[] (keep the stable alias, e.g. 8.0)"
+	@echo "  3. commit on a branch, open a PR -- the version change is reviewed in git"
+	@echo "  4. make deploy              # re-run build.yml to publish the new mirror"
+	@echo "The weekly security cron does NOT touch service images by design."
+
 .PHONY: runs
 runs: ## List recent runs of the build workflow
 	gh run list --workflow $(WORKFLOW) --limit 10

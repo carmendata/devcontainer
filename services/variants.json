@@ -3,15 +3,15 @@
     {
       "name": "mysql",
       "sources": [
-        "container-registry.oracle.com/mysql/community-server:8.0",
-        "container-registry.oracle.com/mysql/community-server:8.0-aarch64"
+        "container-registry.oracle.com/mysql/community-server:8.0.46",
+        "container-registry.oracle.com/mysql/community-server:8.0.46-aarch64"
       ],
-      "tags": ["8.0"]
+      "tags": ["8.0", "8.0.46"]
     },
     {
       "name": "redis",
-      "sources": ["docker.io/library/redis:7.4"],
-      "tags": ["7.4"]
+      "sources": ["docker.io/library/redis:7.4.9"],
+      "tags": ["7.4", "7.4.9"]
     },
     {
       "name": "valkey",

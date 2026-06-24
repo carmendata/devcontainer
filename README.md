@@ -80,12 +80,14 @@ services:
 
 The daemon never starts on its own — `CMD` stays `sleep infinity` — so a container left unprivileged simply never runs it. Docker versions are pinned in [`dev/src/Dockerfile`](dev/src/Dockerfile); bump them deliberately.
 
-Companion service containers, from official upstream images:
+Companion service containers, from GHCR mirrors of the official upstream images:
 
-| Service | Image       | Reachable from the devcontainer at |
-|---------|-------------|------------------------------------|
-| MySQL   | `mysql:8.0` | host `mysql`, port 3306            |
-| Redis   | `redis:7.4` | host `redis`, port 6379            |
+| Service | Image                              | Reachable from the devcontainer at |
+|---------|------------------------------------|------------------------------------|
+| MySQL   | `ghcr.io/<owner>/mysql:8.0`        | host `mysql`, port 3306            |
+| Redis   | `ghcr.io/<owner>/redis:7.4`        | host `redis`, port 6379            |
+
+These are pinned, frozen mirrors — not floating upstream tags. CI mirrors the official Oracle MySQL and Redis images into GHCR (driven by [`services/variants.json`](services/variants.json)), so egress-sandboxed and production hosts pull them from `ghcr.io` instead of Docker Hub. Each source is pinned to an **exact patch version** (e.g. `community-server:8.0.46`) and published under both a stable alias tag (`mysql:8.0`) and the exact tag (`mysql:8.0.46`). Because the source is pinned, `:8.0` never drifts on its own — every dev, CI run, and prod host that pulls `:8.0` gets identical bytes, so a test that passes locally passes in CI. Adopting a newer patch is a **deliberate, reviewed action**: bump the source in `services/variants.json` and re-run the build (the weekly security cron deliberately skips the `services` job — it only auto-patches the base/dev/node tiers). `valkey` and `postgres` are mirrored too but not yet wired into any template.
 
 Connect to them by **service name** — e.g. `mysql -h mysql -u root` or `redis-cli -h redis`. The MySQL root user has no password (`MYSQL_ALLOW_EMPTY_PASSWORD`) — this is a dev sandbox, not a production database. Redis runs with persistence disabled. MySQL data lives in a named volume (`mysql-data`), so it survives a container restart but `docker compose down -v` wipes it; Redis is fully ephemeral. The example `compose.yaml` does not publish the database ports to the host — add a `ports:` mapping if you need host-side access.
 

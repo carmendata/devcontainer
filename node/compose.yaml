@@ -32,7 +32,11 @@ services:
         condition: service_healthy
 
   mysql:
-    image: mysql:8.0
+    # GHCR mirror of the official Oracle MySQL image, version-pinned at the
+    # source (services/variants.json) so `:8.0` is frozen and bumped only by a
+    # deliberate PR. Default pull policy: once pulled it is cached, never silently
+    # replaced -- the validated version you tested against is the one you run.
+    image: ghcr.io/carmendata/mysql:8.0
     environment:
       # Dev sandbox only: passwordless root. Never use this in production.
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
@@ -49,7 +53,8 @@ services:
       retries: 20
 
   redis:
-    image: redis:7.4
+    # GHCR mirror, version-pinned + frozen the same way as mysql above.
+    image: ghcr.io/carmendata/redis:7.4
     # persistence disabled -- the dev datastore is throwaway.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:

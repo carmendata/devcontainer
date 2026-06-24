@@ -9,11 +9,18 @@ name: build
 # run is internally consistent and base/dev layers are shared across variants.
 # base/dev are internal -- keep their packages private.
 #
-# MySQL and Redis are mirrored from upstream into GHCR by the `services` job
-# (driven by services/variants.json) so egress-sandboxed/prod hosts can pull them
-# from ghcr.io instead of docker.io. Every published image is scanned (Trivy ->
-# Security tab) and gets a keyless SLSA build-provenance attestation; the shared
-# logic lives in .github/actions/verify-image.
+# MySQL, Redis (and the unused-for-now valkey/postgres) are mirrored from upstream
+# into GHCR by the `services` job (driven by services/variants.json) so
+# egress-sandboxed/prod hosts can pull them from ghcr.io instead of docker.io.
+# Each source is pinned to an EXACT patch version (e.g. community-server:8.0.46),
+# and the job publishes both a stable alias tag (`mysql:8.0`) and the exact tag
+# (`mysql:8.0.46`). The mirror is therefore frozen: re-running it is idempotent
+# and `mysql:8.0` only moves when someone deliberately bumps the pinned source in
+# services/variants.json. For that reason the `services` job is dispatch-only and
+# is NOT run by the weekly security cron (which exists to auto-patch the
+# base/dev/node tiers) -- datastore version bumps are a reviewed, manual action.
+# Every published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
+# build-provenance attestation; the shared logic lives in .github/actions/verify-image.
 
 on:
   # No push trigger: `git push` only saves work. Builds are triggered on demand
@@ -285,7 +292,10 @@ jobs:
           category: node-dev-${{ matrix.variant.name }}
 
   # Validate services/variants.json into a matrix.
+  # Skipped on the weekly cron: the mirror is version-pinned and frozen, so it
+  # only runs on a deliberate dispatch/release (see the services job below).
   load-services:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.load.outputs.services }}
@@ -309,6 +319,8 @@ jobs:
   # are independent of the base/dev/node tiers.
   services:
     needs: load-services
+    # Version-pinned + frozen: never auto-bump on the weekly security cron.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
