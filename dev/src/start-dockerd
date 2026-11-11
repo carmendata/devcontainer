@@ -8,6 +8,70 @@
 # call this before `docker build` / `docker buildx build`.
 set -euo pipefail
 
+# Register a QEMU emulator for the foreign arch (arm64 on x86_64 hosts, amd64 on
+# arm64 hosts) in the host kernel's binfmt_misc, so buildx can build both
+# linux/amd64 and linux/arm64. Docker Desktop and the macOS Podman machine
+# already provide this; the WSL2 kernel behind Podman Desktop on Windows does
+# not. The registration is kernel-wide (VM-wide under Podman) and is lost when
+# the VM restarts, so this runs on EVERY invocation, including when dockerd is
+# already up. It is best-effort: any failure prints one warning and returns 0.
+#
+# magic/mask are Debian's, from the qemu-user package the binaries come from
+# (/usr/share/qemu/binfmt.d/qemu-{aarch64,x86_64}.conf, qemu 1:10.0.13+ds-0+deb13u1).
+#
+# Flags: F (fix-binary) is required -- the kernel opens the interpreter now, in
+# this container's mount namespace, so BuildKit's containers (another mount
+# namespace, without /usr/local/bin/qemu-*) can still use it. C takes
+# credentials from the emulated binary rather than the interpreter, so setuid
+# programs (sudo, su) behave inside emulated builds; it implies O. P (preserve
+# argv[0]) is left off: without it the only loss is a caller-chosen argv[0]
+# (`exec -a`), whereas P with an interpreter that misses the kernel's
+# AT_FLAGS hint would shift every argument by one.
+register_binfmt() {
+  local dir=/proc/sys/fs/binfmt_misc arch magic mask entry
+  case "$(uname -m)" in
+    x86_64)
+      arch=aarch64
+      magic='\x7f\x45\x4c\x46\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00'
+      mask='\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff'
+      ;;
+    aarch64)
+      arch=x86_64
+      magic='\x7f\x45\x4c\x46\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00'
+      mask='\xff\xff\xff\xff\xff\xfe\xfe\xfc\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff'
+      ;;
+    *) return 0 ;;
+  esac
+  local interp=/usr/local/bin/qemu-$arch
+  warn() { echo "start-dockerd: warning: skipped registering $arch emulation: $*" >&2; }
+
+  if (( ! ((0x$(awk '/^CapEff:/{print $2}' /proc/self/status 2>/dev/null || echo 0) >> 21) & 1) )); then
+    warn "container is not privileged"; return 0
+  fi
+  [[ -x $interp ]] || { warn "$interp missing"; return 0; }
+  if [[ ! -e $dir/register ]]; then
+    mount -t binfmt_misc binfmt_misc "$dir" 2>/dev/null || { warn "cannot mount binfmt_misc"; return 0; }
+  fi
+
+  # Already registered, under any name? Match the ELF magic (as binfmt_misc
+  # prints it: lowercase hex, no separators) against every enabled entry.
+  local want=${magic//\\x/}
+  for entry in "$dir"/*; do
+    [[ $entry == */register || $entry == */status ]] && continue
+    if grep -qx enabled "$entry" 2>/dev/null && grep -qx "magic $want" "$entry" 2>/dev/null; then
+      return 0
+    fi
+  done
+
+  if printf ':qemu-%s:M::%s:%s:%s:CF' "$arch" "$magic" "$mask" "$interp" 2>/dev/null >"$dir/register"; then
+    echo "registered $arch emulation (binfmt_misc qemu-$arch)"
+  else
+    warn "write to $dir/register failed"
+  fi
+  return 0
+}
+register_binfmt || true
+
 # Already started in this container? Check for the dockerd process directly --
 # do not probe `docker info`, which could be answered by some other daemon.
 if pgrep -x dockerd >/dev/null 2>&1; then

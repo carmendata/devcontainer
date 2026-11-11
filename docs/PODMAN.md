@@ -242,6 +242,15 @@ VS Code should build/pull and attach exactly as it would under Docker.
   `start-dockerd` inside the container both work with no further config — restart
   VS Code so it reconnects. If you only ever pull and run the devcontainer (no
   in-container image builds), rootless is fine and you can skip this.
+- **Cross-arch builds register a QEMU emulator in the VM.** So that
+  `docker buildx build --platform linux/amd64,linux/arm64` works on any host,
+  `start-dockerd` registers a QEMU emulator for the other architecture (arm64 on
+  x86 hosts, amd64 on Apple Silicon) with the Podman machine / WSL2 VM kernel
+  each time it runs. If one is already registered (the macOS Podman machine
+  ships amd64 emulation) it is left alone. The registration is VM-wide, so on
+  Windows other WSL distros see it too. It is lost when the VM restarts and is
+  re-registered the next time the devcontainer runs `start-dockerd`. Docker
+  Desktop does the equivalent by default.
 - **Bind-mount permissions.** Rootless Podman maps your host user into the
   container via user namespaces. Files created in the mounted `/workspace`
   generally come back owned by you on the host — often *nicer* than Docker's

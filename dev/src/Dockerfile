@@ -9,6 +9,34 @@
 # language variant above. BASE_IMAGE is the prod base this extends; CI pins it
 # to the immutable base-<sha> built in the same run.
 ARG BASE_IMAGE=ghcr.io/carmendata/base:latest
+
+# --- QEMU user-mode emulators (stage) ---------------------------------------
+# Cross-arch `docker buildx build` needs a QEMU interpreter registered in the
+# host kernel's binfmt_misc. Docker Desktop and the macOS Podman machine ship
+# one; the WSL2 kernel behind Podman Desktop on Windows does not. start-dockerd
+# registers the foreign arch from these binaries at startup.
+#
+# Debian's qemu-user package (statically linked since 9.0.2+ds-7) is ~450 MB
+# unpacked, so it is extracted in a throwaway stage and only the two emulators
+# we need (~31 MB) are copied into the image. The stage runs on the target
+# platform (and on the same trixie base), so each image gets emulators native to
+# its own arch: qemu-aarch64 runs arm64 binaries on an amd64 host, qemu-x86_64
+# runs amd64 binaries on an arm64 host. Both images ship both binaries.
+#
+# Pinned like the Docker packages below; check the version is still in trixie
+# for both arches before bumping:
+#   https://packages.debian.org/trixie/qemu-user
+# Not named QEMU_VERSION: build args are exported to RUN, and qemu-user reads
+# QEMU_* env vars as options -- QEMU_VERSION=... makes an emulated (cross-arch)
+# RUN print qemu's version and exit 0 without running the command.
+FROM ${BASE_IMAGE} AS qemu
+ARG QEMU_USER_VERSION=1:10.0.13+ds-0+deb13u1
+RUN apt-get update \
+    && cd /tmp \
+    && apt-get download qemu-user=${QEMU_USER_VERSION} \
+    && dpkg -x qemu-user_*.deb /tmp/qemu \
+    && rm -rf /var/lib/apt/lists/* /tmp/qemu-user_*.deb
+
 FROM ${BASE_IMAGE}
 
 # --- system packages --------------------------------------------------------
@@ -84,6 +112,9 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
         docker-buildx-plugin=${BUILDX_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=0755 start-dockerd /usr/local/bin/start-dockerd
+# Static QEMU emulators for start-dockerd's binfmt_misc registration (see the
+# qemu stage at the top). Only these two binaries, never the whole package.
+COPY --from=qemu --chmod=0755 /tmp/qemu/usr/bin/qemu-aarch64 /tmp/qemu/usr/bin/qemu-x86_64 /usr/local/bin/
 
 # --- clone-in-volume mountpoint ---------------------------------------------
 # VS Code's "Clone Repository in Container Volume" mounts a named volume at
