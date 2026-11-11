@@ -45,7 +45,7 @@ services:
 
   redis:
     # GHCR mirror, version-pinned + frozen the same way as mysql above.
-    image: ghcr.io/carmendata/redis:7.4
+    image: ghcr.io/carmendata/redis:7.0
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

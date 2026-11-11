@@ -7,8 +7,8 @@
     },
     {
       "name": "redis",
-      "sources": ["docker.io/library/redis:7.4.9"],
-      "tags": ["7.4", "7.4.9"]
+      "sources": ["docker.io/library/redis:7.0.15@sha256:352c1fdadc91926edda08f45aeb3f27f37194c2f14101229c0523a11195c96e3"],
+      "tags": ["7.0", "7.0.15"]
     },
     {
       "name": "valkey",
