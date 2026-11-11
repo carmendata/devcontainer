@@ -1,368 +1,91 @@
 name: build
 
-# Builds the image tiers and pushes them to GHCR as separate packages:
-#   carmendata/base         -- minimal prod-capable debian (base/src)      -> :latest
-#   carmendata/dev          -- base + dev/CI tooling + docker engine (dev) -> :latest
-#   carmendata/devcontainer -- dev + Node per node/variants.json (devs)    -> :node22, :node24
-#   carmendata/production   -- base + Node, lean, no dev tooling           -> :node22, :node24
-# Each tier is built FROM the previous one BY DIGEST (no per-commit tags), so a
-# run is internally consistent and base/dev layers are shared across variants.
-# base/dev are internal -- keep their packages private.
-#
-# MySQL, Redis (and the unused-for-now valkey/postgres) are mirrored from upstream
-# into GHCR by the `services` job (driven by services/variants.json) so
-# egress-sandboxed/prod hosts can pull them from ghcr.io instead of docker.io.
-# Each source is pinned to an EXACT patch version (e.g. mysql-server:8.0.25),
-# and the job publishes both a stable alias tag (`mysql:8.0`) and the exact tag
-# (`mysql:8.0.25`). The mirror is therefore frozen: re-running it is idempotent
-# and `mysql:8.0` only moves when someone deliberately bumps the pinned source in
-# services/variants.json. Builds are manual-only, so datastore version bumps are
-# a reviewed, deliberate action.
-# Every published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
-# build-provenance attestation; the shared logic lives in .github/actions/verify-image.
+# Orchestrator: builds everything, in dependency order, by calling the tier
+# workflows. Each tier's details live in its own file:
+#   base.yml     -> carmendata/base         :latest           (call-only)
+#   dev.yml      -> carmendata/dev          :latest           (call-only, FROM base by digest)
+#   node.yml     -> carmendata/devcontainer :node22, :node24  (FROM base/dev by digest)
+#                   carmendata/production   :node22, :node24  (FROM base by digest)
+#   services.yml -> carmendata/mysql, redis, valkey, postgres (GHCR mirrors)
+# Order: validate-variants -> base -> dev -> node, with services in parallel (no
+# dependency); validate-variants fails a malformed node/variants.json before
+# anything is published. The base/dev digests built in this run are passed
+# down as workflow_call outputs, so a run is internally consistent. node.yml
+# and services.yml can also be dispatched on their own
+# (`make deploy TARGET=node|services`); base and dev are only ever rebuilt
+# from here, together with the tiers above them.
 
 on:
   # No push trigger: `git push` only saves work. Builds are triggered on demand
-  # via workflow_dispatch (`make deploy`) or the ci-released repository_dispatch.
+  # via workflow_dispatch (`make deploy`).
   workflow_dispatch:
-  repository_dispatch:          # ← alfie-ops release.sh fires this
-    types: [ci-released]
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
 
-# Least-privilege default; jobs that push images elevate to packages: write.
+# Never cancel a run in progress. The group must differ from every called
+# workflow's group (base-/dev-/node-/services-<ref>), or the run deadlocks.
+concurrency:
+  group: build-all-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least-privilege default. A called workflow cannot exceed its caller's token,
+# so each calling job grants what the called jobs need. No `secrets: inherit`:
+# only GITHUB_TOKEN is used; pass any future secret explicitly.
 permissions:
   contents: read
 
-env:
-  # Devcontainer images devs pull -- node variant in the tag (node22, node24, ...).
-  IMAGE: ghcr.io/${{ github.repository_owner }}/devcontainer
-  # Lean production runtime bases -- node variant in the tag.
-  PROD_IMAGE: ghcr.io/${{ github.repository_owner }}/production
-  # Internal build tiers, each its own package (keep these private). Downstream
-  # jobs reference them BY DIGEST, so they carry only a rolling :latest tag.
-  BASE_IMG: ghcr.io/${{ github.repository_owner }}/base
-  DEV_IMG: ghcr.io/${{ github.repository_owner }}/dev
-
 jobs:
-  # Build + push the shared org base (carmendata/base). The dev and node jobs
-  # reference it BY DIGEST (no per-commit tags), so a run is internally
-  # consistent: every tier layers on the base built in the same run.
-  base:
+  # Fail fast: validate node/variants.json (the same script node.yml's
+  # load-matrix runs) before base/dev are built and pushed, so a malformed file
+  # publishes nothing.
+  validate-variants:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Validate variants.json
+        run: bash .github/scripts/load-variants.sh all
+
+  base:
+    needs: validate-variants
+    uses: ./.github/workflows/base.yml
     permissions:
       contents: read
       packages: write
       id-token: write        # OIDC for keyless provenance attestation
       attestations: write    # write the build-provenance attestation to GHCR
       security-events: write # upload Trivy SARIF to the Security tab
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      # QEMU lets the amd64 runner also build the linux/arm64 image.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push base
-        id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
-        with:
-          context: base/src
-          file: base/src/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          # Clean two-arch manifest list -- no extra attestation manifests,
-          # which keeps the image predictable for podman / devcontainer tooling.
-          provenance: false
-          tags: ${{ env.BASE_IMG }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=base
-          cache-to: type=gha,scope=base,mode=max
-
-      # BuildKit provenance is disabled in the build step (provenance: false);
-      # keyless SLSA provenance is attached separately by verify-image.
-      - name: Scan + attest base
-        uses: ./.github/actions/verify-image
-        with:
-          image: ${{ env.BASE_IMG }}
-          digest: ${{ steps.build.outputs.digest }}
-          category: base
-
-  # Build + push the dev tooling tier (carmendata/dev) FROM the base above
-  # (by digest). The node job references this by digest in turn.
   dev:
     needs: base
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/dev.yml
     permissions:
       contents: read
       packages: write
       id-token: write        # OIDC for keyless provenance attestation
       attestations: write    # write the build-provenance attestation to GHCR
       security-events: write # upload Trivy SARIF to the Security tab
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push dev
-        id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
-        with:
-          context: dev/src
-          file: dev/src/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          build-args: |
-            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.base.outputs.digest }}
-          tags: ${{ env.DEV_IMG }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=dev
-          cache-to: type=gha,scope=dev,mode=max
-
-      - name: Scan + attest dev
-        uses: ./.github/actions/verify-image
-        with:
-          image: ${{ env.DEV_IMG }}
-          digest: ${{ steps.build.outputs.digest }}
-          category: dev
-
-  # Turn node/variants.json into a build matrix.
-  load-matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      variants: ${{ steps.load.outputs.variants }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - name: Load and validate variants.json
-        id: load
-        run: |
-          jq -e '
-            (.variants | length > 0)
-            and ((.variants | map(.name) | length) == (.variants | map(.name) | unique | length))
-            and ((.variants | map(.tags[]) | length) == (.variants | map(.tags[]) | unique | length))
-          ' node/variants.json > /dev/null \
-            || { echo "::error::node/variants.json is empty or has duplicate name/tag values"; exit 1; }
-          echo "variants=$(jq -c '.variants' node/variants.json)" >> "$GITHUB_OUTPUT"
+    with:
+      base_digest: ${{ needs.base.outputs.digest }}
 
   node:
-    needs: [base, dev, load-matrix]
-    runs-on: ubuntu-latest
+    needs: [base, dev]
+    uses: ./.github/workflows/node.yml
     permissions:
       contents: read
       packages: write
       id-token: write        # OIDC for keyless provenance attestation
       attestations: write    # write the build-provenance attestation to GHCR
       security-events: write # upload Trivy SARIF to the Security tab
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: ${{ fromJson(needs.load-matrix.outputs.variants) }}
-    name: ${{ matrix.variant.name }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+    with:
+      base_digest: ${{ needs.base.outputs.digest }}
+      dev_digest: ${{ needs.dev.outputs.digest }}
+      variant: all
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Rolling tags only (node22, node24, ...) from node/variants.json -- no
-      # per-commit pins on the published devcontainer/production images. The same
-      # tags are derived for both packages.
-      - name: Assemble tags
-        id: tags
-        run: |
-          rolling=$(echo '${{ toJSON(matrix.variant.tags) }}' | jq -r '.[]')
-          emit() {  # $1 = output name, $2 = repo
-            {
-              echo "$1<<EOF"
-              for t in $rolling; do echo "$2:${t}"; done
-              echo EOF
-            } >> "$GITHUB_OUTPUT"
-          }
-          emit dev_list  "$IMAGE"
-          emit prod_list "$PROD_IMAGE"
-
-      # Production runtime base (target prod): base + Node, non-root, no dev
-      # tooling. Built first so the shared node-build stage is cached for the
-      # devcontainer build below.
-      - name: Build and push production
-        id: build-prod
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
-        with:
-          context: node
-          file: node/src/Dockerfile
-          target: prod
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          build-args: |
-            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.base.outputs.digest }}
-            NODE_VERSION=${{ matrix.variant.node }}
-          tags: ${{ steps.tags.outputs.prod_list }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.variant.name }}
-          cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
-
-      - name: Scan + attest production
-        uses: ./.github/actions/verify-image
-        with:
-          image: ${{ env.PROD_IMAGE }}
-          digest: ${{ steps.build-prod.outputs.digest }}
-          category: node-prod-${{ matrix.variant.name }}
-
-      # Devcontainer image (target dev): dev tooling tier + the same Node + pnpm.
-      - name: Build and push devcontainer
-        id: build-dev
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
-        with:
-          context: node
-          file: node/src/Dockerfile
-          target: dev
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          build-args: |
-            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.base.outputs.digest }}
-            DEV_IMAGE=${{ env.DEV_IMG }}@${{ needs.dev.outputs.digest }}
-            NODE_VERSION=${{ matrix.variant.node }}
-            PNPM_VERSION=${{ matrix.variant.pnpm }}
-            VARIANT_TAG=${{ matrix.variant.name }}
-          tags: ${{ steps.tags.outputs.dev_list }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.variant.name }}
-          cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
-
-      - name: Scan + attest devcontainer
-        uses: ./.github/actions/verify-image
-        with:
-          image: ${{ env.IMAGE }}
-          digest: ${{ steps.build-dev.outputs.digest }}
-          category: node-dev-${{ matrix.variant.name }}
-
-  # Validate services/variants.json into a matrix.
-  load-services:
-    runs-on: ubuntu-latest
-    outputs:
-      services: ${{ steps.load.outputs.services }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - name: Load and validate services/variants.json
-        id: load
-        run: |
-          jq -e '
-            (.services | length > 0)
-            and ((.services | map(.name) | length) == (.services | map(.name) | unique | length))
-            and (.services | all(((.name | type == "string") and (.name | length > 0)) and ((.sources | type == "array") and (.sources | length > 0)) and ((.tags | type == "array") and (.tags | length > 0))))
-            and (.services | all((.tags | length) == (.tags | unique | length)))
-          ' services/variants.json > /dev/null \
-            || { echo "::error::each service needs a name, a non-empty sources[] array, and a non-empty unique tags[] array"; exit 1; }
-          echo "services=$(jq -c '.services' services/variants.json)" >> "$GITHUB_OUTPUT"
-
-  # Mirror pinned upstream service images (mysql, redis, ...) to GHCR so the
-  # egress-sandboxed matterhorn hosts and production can pull them from ghcr.io's
-  # stable Fastly IPs instead of docker.io's churning multi-CDN backend. These
-  # are independent of the base/dev/node tiers.
   services:
-    needs: load-services
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/services.yml
     permissions:
       contents: read
       packages: write
       id-token: write        # OIDC for keyless provenance attestation
       attestations: write    # write the build-provenance attestation to GHCR
       security-events: write # upload Trivy SARIF to the Security tab
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJson(needs.load-services.outputs.services) }}
-    name: ${{ matrix.service.name }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Assemble a multi-arch manifest in GHCR straight from the vendor's
-      # published images -- a pure copy (no rebuild), so we ship the exact
-      # upstream bytes. Handles both source shapes: multiple per-arch sources
-      # and a single already-multi-arch source (mysql/redis/valkey/postgres,
-      # optionally digest-pinned as repo:tag@sha256:...) both collapse into one
-      # imagetools create.
-      - name: Assemble + push multi-arch image
-        id: build
-        env:
-          REPO: ghcr.io/${{ github.repository_owner }}/${{ matrix.service.name }}
-          SOURCES: ${{ join(matrix.service.sources, ' ') }}
-          TAGS_JSON: ${{ toJSON(matrix.service.tags) }}
-        run: |
-          tag_args=$(echo "$TAGS_JSON" | jq -r --arg r "$REPO" '.[] | "-t \($r):\(.)"')
-          docker buildx imagetools create $tag_args \
-            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
-            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}" \
-            $SOURCES
-          first=$(echo "$TAGS_JSON" | jq -r '.[0]')
-          digest=$(docker buildx imagetools inspect "$REPO:$first" --format '{{.Manifest.Digest}}')
-          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Scan + attest ${{ matrix.service.name }}
-        uses: ./.github/actions/verify-image
-        with:
-          image: ${{ steps.build.outputs.repo }}
-          digest: ${{ steps.build.outputs.digest }}
-          category: service-${{ matrix.service.name }}
+    with:
+      service: all

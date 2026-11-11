@@ -1,0 +1,245 @@
+name: node
+
+# Builds the NodeJS variants (node/variants.json) and pushes them to GHCR:
+#   carmendata/devcontainer -- dev + NodeJS per node/variants.json (devs) -> :node22, :node24
+#   carmendata/production   -- base + NodeJS, lean, no dev tooling        -> :node22, :node24
+# Both are built FROM the base/dev tiers BY DIGEST (no per-commit tags), so the
+# base/dev layers are shared across variants.
+#
+# Called by build.yml with the base/dev digests built earlier in the same run.
+# Also dispatchable on its own (`make deploy TARGET=node [VARIANT=node24]`) to
+# rebuild variants on the current base/dev: an empty base_digest/dev_digest is
+# resolved from the rolling :latest tag to its digest, so the build-args are
+# still pinned BY DIGEST. The resolve-digests job resolves once per run and
+# every variant job uses its outputs, so all variants in a run build on the
+# same base/dev digests even if a base/dev rebuild moves :latest mid-run.
+# `variant` selects one variant by name (default: all).
+# Every published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
+# build-provenance attestation; the shared logic lives in .github/actions/verify-image.
+
+on:
+  workflow_call:
+    inputs:
+      base_digest:
+        description: Base image digest (sha256:...); empty = resolve base:latest
+        type: string
+        required: false
+        default: ""
+      dev_digest:
+        description: Dev image digest (sha256:...); empty = resolve dev:latest
+        type: string
+        required: false
+        default: ""
+      variant:
+        description: Variant name from node/variants.json, or "all"
+        type: string
+        required: false
+        default: all
+  workflow_dispatch:
+    inputs:
+      base_digest:
+        description: Base image digest (sha256:...); empty = resolve base:latest
+        type: string
+        required: false
+        default: ""
+      dev_digest:
+        description: Dev image digest (sha256:...); empty = resolve dev:latest
+        type: string
+        required: false
+        default: ""
+      variant:
+        description: Variant name from node/variants.json, or "all"
+        type: string
+        required: false
+        default: all
+
+# Literal group name: in a called workflow github.workflow is the caller's name.
+# Must differ from the caller's group (build-all-*), or the run deadlocks.
+concurrency:
+  group: node-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least-privilege default; the node job elevates to packages: write. A caller
+# must grant at least the job's permissions.
+permissions:
+  contents: read
+
+# A called workflow does not inherit the caller's env, so declare it here.
+env:
+  # Devcontainer images devs pull -- NodeJS variant in the tag (node22, node24, ...).
+  IMAGE: ghcr.io/${{ github.repository_owner }}/devcontainer
+  # Lean production runtime bases -- NodeJS variant in the tag.
+  PROD_IMAGE: ghcr.io/${{ github.repository_owner }}/production
+  # Internal build tiers, each its own package (keep these private). This
+  # workflow references them BY DIGEST; they carry only a rolling :latest tag.
+  BASE_IMG: ghcr.io/${{ github.repository_owner }}/base
+  DEV_IMG: ghcr.io/${{ github.repository_owner }}/dev
+
+jobs:
+  # Turn node/variants.json into a build matrix, optionally narrowed to one
+  # variant. An unknown variant name fails here, so nothing is published.
+  load-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      variants: ${{ steps.load.outputs.variants }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      # Shared with build.yml's validate-variants job.
+      - name: Load and validate variants.json
+        id: load
+        env:
+          VARIANT: ${{ inputs.variant || 'all' }}
+        run: bash .github/scripts/load-variants.sh "$VARIANT"
+
+  # Resolve the base/dev digests ONCE per run, so every variant builds on the
+  # same ones. Digests passed in (build.yml passes the ones it just built) are
+  # used as-is; an empty one is resolved from the rolling :latest tag. Runs
+  # after login because the base/dev packages are private.
+  resolve-digests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      base: ${{ steps.digests.outputs.base }}
+      dev: ${{ steps.digests.outputs.dev }}
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve base/dev digests
+        id: digests
+        env:
+          BASE_DIGEST: ${{ inputs.base_digest }}
+          DEV_DIGEST: ${{ inputs.dev_digest }}
+        run: |
+          resolve() {  # $1 = output name, $2 = digest input (may be empty), $3 = image
+            d="$2"
+            if [ -z "$d" ]; then
+              d=$(docker buildx imagetools inspect "$3:latest" --format '{{.Manifest.Digest}}')
+              echo "$1: resolved $3:latest -> $d"
+            else
+              echo "$1: using $3@$d"
+            fi
+            echo "$d" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+              || { echo "::error::$1 digest '$d' is not a sha256:<64 hex> digest"; exit 1; }
+            echo "$1=$d" >> "$GITHUB_OUTPUT"
+          }
+          resolve base "$BASE_DIGEST" "${{ env.BASE_IMG }}"
+          resolve dev  "$DEV_DIGEST"  "${{ env.DEV_IMG }}"
+
+  node:
+    needs: [load-matrix, resolve-digests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJson(needs.load-matrix.outputs.variants) }}
+    name: ${{ matrix.variant.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Rolling tags only (node22, node24, ...) from node/variants.json -- no
+      # per-commit pins on the published devcontainer/production images. The same
+      # tags are derived for both packages.
+      - name: Assemble tags
+        id: tags
+        run: |
+          rolling=$(echo '${{ toJSON(matrix.variant.tags) }}' | jq -r '.[]')
+          emit() {  # $1 = output name, $2 = repo
+            {
+              echo "$1<<EOF"
+              for t in $rolling; do echo "$2:${t}"; done
+              echo EOF
+            } >> "$GITHUB_OUTPUT"
+          }
+          emit dev_list  "$IMAGE"
+          emit prod_list "$PROD_IMAGE"
+
+      # Production runtime base (target prod): base + NodeJS, non-root, no dev
+      # tooling. Built first so the shared node-build stage is cached for the
+      # devcontainer build below.
+      - name: Build and push production
+        id: build-prod
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: node
+          file: node/src/Dockerfile
+          target: prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.resolve-digests.outputs.base }}
+            NODE_VERSION=${{ matrix.variant.node }}
+          tags: ${{ steps.tags.outputs.prod_list }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.variant.name }}
+          cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
+
+      - name: Scan + attest production
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.PROD_IMAGE }}
+          digest: ${{ steps.build-prod.outputs.digest }}
+          category: node-prod-${{ matrix.variant.name }}
+
+      # Devcontainer image (target dev): dev tooling tier + the same NodeJS + pnpm.
+      - name: Build and push devcontainer
+        id: build-dev
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: node
+          file: node/src/Dockerfile
+          target: dev
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_IMG }}@${{ needs.resolve-digests.outputs.base }}
+            DEV_IMAGE=${{ env.DEV_IMG }}@${{ needs.resolve-digests.outputs.dev }}
+            NODE_VERSION=${{ matrix.variant.node }}
+            PNPM_VERSION=${{ matrix.variant.pnpm }}
+            VARIANT_TAG=${{ matrix.variant.name }}
+          tags: ${{ steps.tags.outputs.dev_list }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.variant.name }}
+          cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
+
+      - name: Scan + attest devcontainer
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.IMAGE }}
+          digest: ${{ steps.build-dev.outputs.digest }}
+          category: node-dev-${{ matrix.variant.name }}

@@ -131,17 +131,19 @@ There is deliberately **no `latest` tag**: across multiple stacks sharing one pa
 
 ## Updating
 
-Builds are **not** triggered by `git push` — pushing only saves work. The workflow runs on demand via `workflow_dispatch` (driven by `make deploy`, below) — see [`.github/workflows/build.yml`](.github/workflows/build.yml). It builds the tiers in order — `base`, then `dev`, then each variant (both its production and devcontainer images).
+Builds are **not** triggered by `git push` — pushing only saves work. Builds run on demand via `workflow_dispatch` (driven by `make deploy`, below). The pipeline is split into one workflow per tier under [`.github/workflows/`](.github/workflows/), with [`build.yml`](.github/workflows/build.yml) as the orchestrator that calls them in order — [`base.yml`](.github/workflows/base.yml), then [`dev.yml`](.github/workflows/dev.yml), then [`node.yml`](.github/workflows/node.yml) for each variant (both its production and devcontainer images) — with [`services.yml`](.github/workflows/services.yml) (the GHCR service mirrors) running in parallel. Each tier is built from the one below it by digest, passed between the workflows. `base.yml` and `dev.yml` can only be called from `build.yml`, so those tiers are never rebuilt without the tiers above them; `node.yml` and `services.yml` can also be dispatched on their own. A workflow file can only be dispatched once it exists on the default branch, so land a new or renamed workflow on `main` before running `make deploy TARGET=…` against it.
 
 The [`Makefile`](Makefile) drives the pipeline (it wraps the GitHub CLI, so `gh` must be authenticated):
 
 ```bash
-make deploy   # trigger build.yml on the current branch and watch it
-make runs     # list recent workflow runs
-make logs     # show the latest run's log (after a failure)
+make deploy                                # full build: trigger build.yml on the current branch and watch it
+make deploy TARGET=node VARIANT=node24     # rebuild one NodeJS variant on the current base/dev (VARIANT defaults to all)
+make deploy TARGET=services SERVICE=mysql  # publish one service mirror only (SERVICE defaults to all)
+make runs                                  # list recent runs of the selected workflow (same TARGET as above)
+make logs                                  # show the latest run's log (after a failure)
 ```
 
-To change something everyone gets — a new extension, an extra system package, a Node or pnpm version — edit the relevant file and push to `main`.
+To change something everyone gets — a new extension, an extra system package, a Node or pnpm version — edit the relevant file and push to `main` to save the change, then run `make deploy` (or the `TARGET` form above) to publish it.
 
 - `base/src/Dockerfile` — the minimal prod-capable base (`debian:trixie-slim` + essentials)
 - `dev/src/Dockerfile` — the dev/CI tier: common system packages, `gh`, the pinned Docker engine/buildx
@@ -151,7 +153,7 @@ To change something everyone gets — a new extension, an extra system package, 
 - `node/examples/devcontainer.json` — the full standard devcontainer config (extensions, settings, env, ports, lifecycle); baked into the image and copied downstream
 - `node/examples/compose.yaml` — the service definitions downstream repos copy
 
-To add a build variant — a new Node major, or a second pnpm version for an existing one — add an object to `node/variants.json` with a unique `name`, the full `node` version (e.g. `24.16.0`), a `pnpm` version, and the rolling `tags` to publish. For example, a second pnpm line for Node 24: `{ "name": "node24-pnpm9", "node": "24.16.0", "pnpm": "9.15.0", "tags": ["node24-pnpm9"] }`. CI picks it up on the next push — no workflow change needed.
+To add a build variant — a new Node major, or a second pnpm version for an existing one — add an object to `node/variants.json` with a unique `name`, the full `node` version (e.g. `24.16.0`), a `pnpm` version, and the rolling `tags` to publish. For example, a second pnpm line for Node 24: `{ "name": "node24-pnpm9", "node": "24.16.0", "pnpm": "9.15.0", "tags": ["node24-pnpm9"] }`. The next `make deploy` builds it (or `make deploy TARGET=node VARIANT=<name>` to build just that variant) — no workflow change needed.
 
 One caveat on how changes propagate. Edits to `node/examples/devcontainer.json` or `node/examples/compose.yaml` are baked into the image's reference copy (`/usr/local/share/devcontainer/`) on the next build, but reach a downstream repo's `.devcontainer/` only when those files are re-copied — by the CI sync tooling, or by hand. This is unlike the `app` image itself, which is pulled automatically on the next container rebuild.
 
@@ -199,9 +201,13 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 
 ```
 .
-├── Makefile                         trigger/watch the build workflow (gh wrapper)
+├── Makefile                         trigger/watch the build workflows (gh wrapper)
 ├── .github/workflows/
-│   └── build.yml                    multi-arch base -> dev -> variant build + push to GHCR
+│   ├── build.yml                    orchestrator: base -> dev -> node, services in parallel
+│   ├── base.yml                     multi-arch base tier build + push to GHCR (called by build.yml)
+│   ├── dev.yml                      multi-arch dev tier build + push to GHCR (called by build.yml)
+│   ├── node.yml                     multi-arch NodeJS variants (devcontainer + production)
+│   └── services.yml                 GHCR mirrors of the upstream service images
 ├── base/                            tier 1: minimal prod-capable base (all stacks)
 │   └── src/
 │       └── Dockerfile               debian:trixie-slim + org-wide essentials
@@ -224,5 +230,5 @@ The trade-off goes the other way once teams need genuinely different stacks. At 
 └── README.md
 ```
 
-Further stacks would sit alongside `node/` — a `go/` or `python/` directory with its own `variants.json` — each layered on the shared `base/` + `dev/` tiers and added as a job in `.github/workflows/build.yml`.
+Further stacks would sit alongside `node/` — a `go/` or `python/` directory with its own `variants.json` — each layered on the shared `base/` + `dev/` tiers and built by its own reusable workflow (like `.github/workflows/node.yml`) called from `.github/workflows/build.yml`.
 

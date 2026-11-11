@@ -1,0 +1,96 @@
+name: base
+
+# Builds the minimal prod-capable debian tier and pushes it to GHCR:
+#   carmendata/base -- minimal prod-capable debian (base/src) -> :latest
+# Downstream tiers (dev, node) are built FROM it BY DIGEST (no per-commit tags),
+# so a run is internally consistent and the base layers are shared across
+# variants. The digest is returned as this workflow's `digest` output.
+# base is internal -- keep its package private.
+#
+# Called only by build.yml (no workflow_dispatch), so base is never rebuilt
+# without the tiers above it.
+# The published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
+# build-provenance attestation; the shared logic lives in .github/actions/verify-image.
+
+on:
+  workflow_call:
+    outputs:
+      digest:
+        description: Index digest (sha256:...) of the base image pushed by this run
+        value: ${{ jobs.base.outputs.digest }}
+
+# Literal group name: in a called workflow github.workflow is the caller's name.
+# Must differ from the caller's group (build-all-*), or the run deadlocks.
+concurrency:
+  group: base-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least-privilege default; the job elevates to packages: write. The caller must
+# grant at least the job's permissions.
+permissions:
+  contents: read
+
+# A called workflow does not inherit the caller's env, so declare it here.
+env:
+  # Internal build tier, its own package (keep it private). Downstream tiers
+  # reference it BY DIGEST, so it carries only a rolling :latest tag.
+  BASE_IMG: ghcr.io/${{ github.repository_owner }}/base
+
+jobs:
+  # Build + push the shared org base (carmendata/base). The dev and node tiers
+  # reference it BY DIGEST (no per-commit tags), so a run is internally
+  # consistent: every tier layers on the base built in the same run.
+  base:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      # QEMU lets the amd64 runner also build the linux/arm64 image.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: base/src
+          file: base/src/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # Clean two-arch manifest list -- no extra attestation manifests,
+          # which keeps the image predictable for podman / devcontainer tooling.
+          provenance: false
+          tags: ${{ env.BASE_IMG }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=base
+          cache-to: type=gha,scope=base,mode=max
+
+      # BuildKit provenance is disabled in the build step (provenance: false);
+      # keyless SLSA provenance is attached separately by verify-image.
+      - name: Scan + attest base
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.BASE_IMG }}
+          digest: ${{ steps.build.outputs.digest }}
+          category: base

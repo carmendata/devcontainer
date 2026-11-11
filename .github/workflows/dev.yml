@@ -1,0 +1,98 @@
+name: dev
+
+# Builds the dev/CI tooling tier and pushes it to GHCR:
+#   carmendata/dev -- base + dev/CI tooling + docker engine (dev) -> :latest
+# It is built FROM the base image BY DIGEST (the required `base_digest` input,
+# always the digest built earlier in the same build.yml run), and returns its
+# own digest as the `digest` output for the node tier.
+# dev is internal -- keep its package private.
+#
+# Called only by build.yml (no workflow_dispatch), so dev is never rebuilt
+# without the tiers above it.
+# The published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
+# build-provenance attestation; the shared logic lives in .github/actions/verify-image.
+
+on:
+  workflow_call:
+    inputs:
+      base_digest:
+        description: Index digest (sha256:...) of the base image to build FROM
+        type: string
+        required: true
+    outputs:
+      digest:
+        description: Index digest (sha256:...) of the dev image pushed by this run
+        value: ${{ jobs.dev.outputs.digest }}
+
+# Literal group name: in a called workflow github.workflow is the caller's name.
+# Must differ from the caller's group (build-all-*), or the run deadlocks.
+concurrency:
+  group: dev-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least-privilege default; the job elevates to packages: write. The caller must
+# grant at least the job's permissions.
+permissions:
+  contents: read
+
+# A called workflow does not inherit the caller's env, so declare it here.
+env:
+  # Internal build tiers, each its own package (keep these private). Downstream
+  # tiers reference them BY DIGEST, so they carry only a rolling :latest tag.
+  BASE_IMG: ghcr.io/${{ github.repository_owner }}/base
+  DEV_IMG: ghcr.io/${{ github.repository_owner }}/dev
+
+jobs:
+  # Build + push the dev tooling tier (carmendata/dev) FROM the base
+  # (by digest). The node tier references this by digest in turn.
+  dev:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push dev
+        id: build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: dev/src
+          file: dev/src/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_IMG }}@${{ inputs.base_digest }}
+          tags: ${{ env.DEV_IMG }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=dev
+          cache-to: type=gha,scope=dev,mode=max
+
+      - name: Scan + attest dev
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ env.DEV_IMG }}
+          digest: ${{ steps.build.outputs.digest }}
+          category: dev

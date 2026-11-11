@@ -1,0 +1,132 @@
+name: services
+
+# Mirrors MySQL, Redis (and the unused-for-now valkey/postgres) from upstream
+# into GHCR, driven by services/variants.json, so egress-sandboxed/prod hosts
+# can pull them from ghcr.io instead of docker.io. Each source is pinned to an
+# EXACT patch version (e.g. mysql-server:8.0.25), and the job publishes both a
+# stable alias tag (`mysql:8.0`) and the exact tag (`mysql:8.0.25`). Adopting a
+# new version means editing services/variants.json, and builds are manual-only,
+# so a datastore version bump is a reviewed, deliberate action.
+# Services mirrors are idempotent only for sources pinned by digest (repo:tag@sha256:…). A tag-only source picks up any upstream rebuild of that tag on rerun.
+#
+# Called by build.yml (in parallel with the image tiers, which do not depend on
+# it). Also dispatchable on its own (`make deploy TARGET=services SERVICE=mysql`)
+# to publish one mirror without rebuilding anything else. `service` selects one
+# service by name (default: all).
+# Every published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
+# build-provenance attestation; the shared logic lives in .github/actions/verify-image.
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: Service name from services/variants.json, or "all"
+        type: string
+        required: false
+        default: all
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service name from services/variants.json, or "all"
+        type: string
+        required: false
+        default: all
+
+# Literal group name: in a called workflow github.workflow is the caller's name.
+# Must differ from the caller's group (build-all-*), or the run deadlocks.
+concurrency:
+  group: services-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least-privilege default; the services job elevates to packages: write. A
+# caller must grant at least the job's permissions.
+permissions:
+  contents: read
+
+jobs:
+  # Validate services/variants.json into a matrix, optionally narrowed to one
+  # service. An unknown service name fails here, so nothing is published.
+  load-services:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.load.outputs.services }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Load and validate services/variants.json
+        id: load
+        env:
+          SERVICE: ${{ inputs.service || 'all' }}
+        run: |
+          jq -e '
+            (.services | length > 0)
+            and ((.services | map(.name) | length) == (.services | map(.name) | unique | length))
+            and (.services | all(((.name | type == "string") and (.name | length > 0)) and ((.sources | type == "array") and (.sources | length > 0)) and ((.tags | type == "array") and (.tags | length > 0))))
+            and (.services | all((.tags | length) == (.tags | unique | length)))
+          ' services/variants.json > /dev/null \
+            || { echo "::error::each service needs a name, a non-empty sources[] array, and a non-empty unique tags[] array"; exit 1; }
+          services=$(jq -c --arg s "$SERVICE" '.services | if $s == "all" then . else map(select(.name == $s)) end' services/variants.json)
+          [ "$(echo "$services" | jq 'length')" -gt 0 ] \
+            || { echo "::error::service '$SERVICE' is not in services/variants.json (use a service name or 'all')"; exit 1; }
+          echo "services=$services" >> "$GITHUB_OUTPUT"
+
+  # Mirror pinned upstream service images (mysql, redis, ...) to GHCR so the
+  # egress-sandboxed matterhorn hosts and production can pull them from ghcr.io's
+  # stable Fastly IPs instead of docker.io's churning multi-CDN backend. These
+  # are independent of the base/dev/node tiers.
+  services:
+    needs: load-services
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # OIDC for keyless provenance attestation
+      attestations: write    # write the build-provenance attestation to GHCR
+      security-events: write # upload Trivy SARIF to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.load-services.outputs.services) }}
+    name: ${{ matrix.service.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Assemble a multi-arch manifest in GHCR straight from the vendor's
+      # published images -- a pure copy (no rebuild), so we ship the exact
+      # upstream bytes. Handles both source shapes: multiple per-arch sources
+      # and a single already-multi-arch source (mysql/redis/valkey/postgres,
+      # optionally digest-pinned as repo:tag@sha256:...) both collapse into one
+      # imagetools create.
+      - name: Assemble + push multi-arch image
+        id: build
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ matrix.service.name }}
+          SOURCES: ${{ join(matrix.service.sources, ' ') }}
+          TAGS_JSON: ${{ toJSON(matrix.service.tags) }}
+        run: |
+          tag_args=$(echo "$TAGS_JSON" | jq -r --arg r "$REPO" '.[] | "-t \($r):\(.)"')
+          docker buildx imagetools create $tag_args \
+            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --annotation "index:org.opencontainers.image.revision=${{ github.sha }}" \
+            $SOURCES
+          first=$(echo "$TAGS_JSON" | jq -r '.[0]')
+          digest=$(docker buildx imagetools inspect "$REPO:$first" --format '{{.Manifest.Digest}}')
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Scan + attest ${{ matrix.service.name }}
+        uses: ./.github/actions/verify-image
+        with:
+          image: ${{ steps.build.outputs.repo }}
+          digest: ${{ steps.build.outputs.digest }}
+          category: service-${{ matrix.service.name }}
