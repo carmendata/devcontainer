@@ -2,11 +2,8 @@
   "services": [
     {
       "name": "mysql",
-      "sources": [
-        "container-registry.oracle.com/mysql/community-server:8.0.46",
-        "container-registry.oracle.com/mysql/community-server:8.0.46-aarch64"
-      ],
-      "tags": ["8.0", "8.0.46"]
+      "sources": ["docker.io/mysql/mysql-server:8.0.25@sha256:56ec3d7509327c66e4b8b22c72ecd56572ae1f87c91ef806c80fa09c7707c845"],
+      "tags": ["8.0", "8.0.25"]
     },
     {
       "name": "redis",

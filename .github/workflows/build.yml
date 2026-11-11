@@ -12,23 +12,18 @@ name: build
 # MySQL, Redis (and the unused-for-now valkey/postgres) are mirrored from upstream
 # into GHCR by the `services` job (driven by services/variants.json) so
 # egress-sandboxed/prod hosts can pull them from ghcr.io instead of docker.io.
-# Each source is pinned to an EXACT patch version (e.g. community-server:8.0.46),
+# Each source is pinned to an EXACT patch version (e.g. mysql-server:8.0.25),
 # and the job publishes both a stable alias tag (`mysql:8.0`) and the exact tag
-# (`mysql:8.0.46`). The mirror is therefore frozen: re-running it is idempotent
+# (`mysql:8.0.25`). The mirror is therefore frozen: re-running it is idempotent
 # and `mysql:8.0` only moves when someone deliberately bumps the pinned source in
-# services/variants.json. For that reason the `services` job is dispatch-only and
-# is NOT run by the weekly security cron (which exists to auto-patch the
-# base/dev/node tiers) -- datastore version bumps are a reviewed, manual action.
+# services/variants.json. Builds are manual-only, so datastore version bumps are
+# a reviewed, deliberate action.
 # Every published image is scanned (Trivy -> Security tab) and gets a keyless SLSA
 # build-provenance attestation; the shared logic lives in .github/actions/verify-image.
 
 on:
   # No push trigger: `git push` only saves work. Builds are triggered on demand
-  # via workflow_dispatch (`make deploy`), plus a weekly run for security
-  # updates. Remove the schedule too if you want builds to be exclusively manual.
-  schedule:
-    # Monday 04:00 UTC -- pick up base-image and OS security updates.
-    - cron: '0 4 * * 1'
+  # via workflow_dispatch (`make deploy`) or the ci-released repository_dispatch.
   workflow_dispatch:
   repository_dispatch:          # ← alfie-ops release.sh fires this
     types: [ci-released]
@@ -292,10 +287,7 @@ jobs:
           category: node-dev-${{ matrix.variant.name }}
 
   # Validate services/variants.json into a matrix.
-  # Skipped on the weekly cron: the mirror is version-pinned and frozen, so it
-  # only runs on a deliberate dispatch/release (see the services job below).
   load-services:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.load.outputs.services }}
@@ -319,8 +311,6 @@ jobs:
   # are independent of the base/dev/node tiers.
   services:
     needs: load-services
-    # Version-pinned + frozen: never auto-bump on the weekly security cron.
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -349,9 +339,10 @@ jobs:
 
       # Assemble a multi-arch manifest in GHCR straight from the vendor's
       # published images -- a pure copy (no rebuild), so we ship the exact
-      # upstream bytes. Handles both source shapes: multiple per-arch tags
-      # (e.g. Oracle MySQL :8.0 + :8.0-aarch64) and a single already-multi-arch
-      # source (redis/valkey/postgres) both collapse into one imagetools create.
+      # upstream bytes. Handles both source shapes: multiple per-arch sources
+      # and a single already-multi-arch source (mysql/redis/valkey/postgres,
+      # optionally digest-pinned as repo:tag@sha256:...) both collapse into one
+      # imagetools create.
       - name: Assemble + push multi-arch image
         id: build
         env:

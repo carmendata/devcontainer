@@ -3,9 +3,8 @@
 # base -> dev -> node image tiers to GHCR.
 #
 # Builds are NOT triggered by `git push` -- the workflow has no push trigger, so
-# pushing only saves work. Use `make deploy` to build on demand (a weekly cron
-# also rebuilds for security updates). Requires the GitHub CLI (`gh`)
-# authenticated against this repo. Note: dispatching against a branch only works
+# pushing only saves work. Use `make deploy` to build on demand. Requires the
+# GitHub CLI (`gh`) authenticated against this repo. Note: dispatching against a branch only works
 # once build.yml exists on the default branch.
 
 WORKFLOW := build.yml
@@ -49,7 +48,6 @@ bump-services: ## How to bump a frozen service image (mysql/redis/...) to a new 
 	@echo "     and the matching exact tag in tags[] (keep the stable alias, e.g. 8.0)"
 	@echo "  3. commit on a branch, open a PR -- the version change is reviewed in git"
 	@echo "  4. make deploy              # re-run build.yml to publish the new mirror"
-	@echo "The weekly security cron does NOT touch service images by design."
 
 .PHONY: runs
 runs: ## List recent runs of the build workflow
