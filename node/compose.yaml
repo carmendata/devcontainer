@@ -19,8 +19,8 @@ services:
       #   NODE_VERSION=22.22.3 PNPM_VERSION=10.33.0 VARIANT_TAG=node22 docker compose build
       # or just run ../build-all.sh, which reads variants.json for you.
       args:
-        BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/carmendata/devcontainer:base}
-        DEV_IMAGE: ${DEV_IMAGE:-ghcr.io/carmendata/devcontainer:dev}
+        BASE_IMAGE: ${BASE_IMAGE:-ghcr.io/carmendata/base:latest}
+        DEV_IMAGE: ${DEV_IMAGE:-ghcr.io/carmendata/dev:latest}
         NODE_VERSION: ${NODE_VERSION:?set NODE_VERSION from node/variants.json, e.g. 24.16.0}
         PNPM_VERSION: ${PNPM_VERSION:?set PNPM_VERSION from node/variants.json}
         VARIANT_TAG: ${VARIANT_TAG:?set VARIANT_TAG to the variant name, e.g. node24}

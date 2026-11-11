@@ -115,12 +115,14 @@ Pin `production:node24` (rolling) or `production:node24-<sha>` (immutable), exac
 
 ## Tagging
 
-Two packages, with the tier/variant in the **tag**, not the image name:
+Four packages. The base and dev tiers are their own packages; the language variants live in the **tag** of the devcontainer package:
 
-- **`ghcr.io/<owner>/devcontainer`** — the devcontainer images and their build tiers: `devcontainer:base`, `devcontainer:dev`, and the variants `devcontainer:node22` / `devcontainer:node24` (room for `:go`, `:python`, … later).
+- **`ghcr.io/<owner>/base`** — the shared foundation tier: `base:latest`.
+- **`ghcr.io/<owner>/dev`** — the dev tooling tier layered on base: `dev:latest`.
+- **`ghcr.io/<owner>/devcontainer`** — the devcontainer variants: `devcontainer:node22` / `devcontainer:node24` (room for `:go`, `:python`, … later).
 - **`ghcr.io/<owner>/production`** — the lean production runtime bases: `production:node22` / `production:node24` (see [Production images](#production-images)).
 
-Both keep the package stack-agnostic. Most repos pin a language variant tag.
+The `base` and `dev` packages are stack-agnostic. Most repos pin a language variant tag.
 
 The variants and the tags they publish are defined in [`node/variants.json`](node/variants.json). For each variant, CI publishes:
 
@@ -174,7 +176,7 @@ docker compose build              # build the app image for that variant
 docker compose up -d --wait       # start app + mysql + redis
 ```
 
-By default `docker compose build` layers the app on the **published** `base` and `dev` images (`ghcr.io/<owner>/devcontainer:{base,dev}`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) — it builds `devcontainer:base` → `devcontainer:dev` → then both targets of every variant (`production:<name>` and `devcontainer:<name>`) — or build the tiers and pass `BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev` alongside the variant vars above to `docker compose build`.
+By default `docker compose build` layers the app on the **published** `base` and `dev` images (`ghcr.io/<owner>/{base,dev}:latest`), so it works without building the lower tiers yourself. To test local changes to `base/` or `dev/`, build the whole chain with [`node/build-all.sh`](node/build-all.sh) — it builds `devcontainer:base` → `devcontainer:dev` → then both targets of every variant (`production:<name>` and `devcontainer:<name>`) — or build the tiers and pass `BASE_IMAGE=devcontainer:base DEV_IMAGE=devcontainer:dev` alongside the variant vars above to `docker compose build`.
 
 `--wait` blocks until every healthcheck passes. Poke at the stack:
 

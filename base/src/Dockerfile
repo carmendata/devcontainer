@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Tier 1 of 3: the shared foundation, kept minimal so it is usable for
 # PRODUCTION as well as dev. Production images (in other repos) do
-# `FROM ghcr.io/<owner>/devcontainer:base` and add only their app + runtime;
+# `FROM ghcr.io/<owner>/base:latest` and add only their app + runtime;
 # devcontainers add the dev tooling (tier 2, dev/src/Dockerfile) and a language
 # (tier 3, node/src/Dockerfile) on top.
 #
